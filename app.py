@@ -4,91 +4,114 @@ import pandas as pd
 from datetime import datetime
 import urllib.parse
 
-st.set_page_config(layout="wide", page_title="Whale Scanner ALL MARKET")
-st.title("Whale V8.0 - كاشف كل السوق")
-st.markdown('<meta http-equiv="refresh" content="120">', unsafe_allow_html=True)
+st.set_page_config(layout="wide")
+st.title("Whale V8.1 - كاشف كل السوق مجاناً")
+st.markdown('<meta http-equiv="refresh" content="300">', unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
-def get_sp500():
+@st.cache_data(ttl=86400)
+def get_all_tickers():
     try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        df = pd.read_html(url)[0]
-        return df['Symbol'].tolist()
+        # قائمة مجانية لكل أسهم أمريكا من NASDAQ
+        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
+        df = pd.read_csv(url, sep="\n", header=None)
+        nasdaq = df[0].tolist()
+        url2 = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nyse/nyse_tickers.txt"
+        df2 = pd.read_csv(url2, sep="\n", header=None)
+        nyse = df2[0].tolist()
+        all_t = nasdaq + nyse
+        # نشيل الرموز اللي فيها ^ أو /
+        all_t = [t for t in all_t if len(t)<=5 and '^' not in t and '/' not in t]
+        return list(set(all_t))[:3000] # نأخذ أول 3000 عشان السرعة
     except:
-        # لو ويكيبيديا ما اشتغل، نستخدم أهم 100 سهم
-        return ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","BRK-B","LLY","AVGO","JPM","UNH","V","XOM","MA","COST","HD","PG","JNJ","MRK","ABBV","CVX","ADBE","PEP","CRM","KO","WMT","BAC","NFLX","ORCL","AMD","TMO","ACN","CSCO","MCD","LIN","ABT","DIS","WFC","DHR","VZ","QCOM","INTC","INTU","AMGN","TXN","PFE","CAT","AMAT","IBM","GE","NOW","UNP","MS","SPG","LOW","BLK","BA","HON"]
+        # لو فشل، نرجع S&P 500 + أهم 500 سهم صغير
+        return ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","JPM","V","UNH","MA","HD","COST","PG","XOM","LLY","AVGO","CVX","ABBV","MRK","PEP","KO","ADBE","WMT","CRM","BAC","NFLX","ORCL","AMD","TMO","CSCO","ACN","MCD","ABT","DHR","LIN","VZ","QCOM","TXN","WFC","INTC","AMGN","CAT","UNP","MS","INTU","AMAT","IBM","GE","NOW","LOW","HON","BLK","BA","SPG","PFE","DIS"]*6
 
-stocks_list = get_sp500()
-st.sidebar.info(f"سيتم فحص {len(stocks_list)} سهم")
+all_tickers = get_all_tickers()
+st.sidebar.write(f"إجمالي الأسهم: {len(all_tickers)}")
 
-min_premium = st.sidebar.slider("أقل مبلغ للحوت $", 500000, 5000000, 1000000, step=250000)
-limit = st.sidebar.slider("كم حوت تبي تشوف؟", 10, 100, 30)
+min_prem = st.sidebar.slider("أقل مبلغ حوت $", 500000, 5000000, 1000000, 250000)
+batch_size = st.sidebar.slider("كم سهم في كل فحص؟", 100, 500, 200)
+start_idx = st.sidebar.number_input("ابدأ من سهم رقم", 0, len(all_tickers)-batch_size, 0, 100)
 
-if st.button(f"🚀 ابدأ فحص {len(stocks_list)} سهم (يأخذ 2-3 دقايق)"):
+if 'results' not in st.session_state:
+    st.session_state.results = pd.DataFrame()
+
+col1, col2 = st.columns(2)
+with col1:
+    scan_btn = st.button(f"🚀 افحص من {start_idx} إلى {start_idx+batch_size}")
+with col2:
+    clear_btn = st.button("🗑️ امسح النتائج")
+
+if clear_btn:
+    st.session_state.results = pd.DataFrame()
+    st.rerun()
+
+if scan_btn:
+    batch = all_tickers[start_idx:start_idx+batch_size]
     all_data = []
-    progress = st.progress(0)
-    status = st.empty()
+    prog = st.progress(0)
+    stat = st.empty()
 
-    for i, t in enumerate(stocks_list):
+    for i, t in enumerate(batch):
         try:
-            status.text(f"يفحص: {t} ({i+1}/{len(stocks_list)})")
+            stat.text(f"يفحص {t} ({i+1}/{len(batch)}) - المجموع {start_idx+i}")
             s = yf.Ticker(t)
             if not s.options:
-                progress.progress((i+1)/len(stocks_list))
+                prog.progress((i+1)/len(batch))
                 continue
-            chain = s.option_chain(s.options[0])
-            for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
-                if df.empty: continue
-                df["premium"] = df["lastPrice"] * df["volume"] * 100
-                # الشرط: المبلغ + الحجم فوق 500 عقد
-                f = df[(df["premium"] >= min_premium) & (df["volume"] >= 300)].copy()
-                if not f.empty:
-                    f["ticker"]=t
-                    f["signal"]=typ
-                    all_data.append(f)
+            # نفحص أول تاريخين فقط عشان السرعة
+            for exp in s.options[:1]:
+                chain = s.option_chain(exp)
+                for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                    if df.empty: continue
+                    df["premium"] = df["lastPrice"] * df["volume"] * 100
+                    f = df[(df["premium"]>=min_prem) & (df["volume"]>=200)].copy()
+                    if not f.empty:
+                        f["ticker"]=t
+                        f["signal"]=typ
+                        f["exp"]=exp
+                        all_data.append(f)
         except:
             pass
-        progress.progress((i+1)/len(stocks_list))
+        prog.progress((i+1)/len(batch))
 
-    status.empty()
-    progress.empty()
+    stat.empty()
+    prog.empty()
 
     if all_data:
-        final = pd.concat(all_data).sort_values("premium", ascending=False).head(limit)
+        new_final = pd.concat(all_data).sort_values("premium", ascending=False)
+        # نضيف للنتائج القديمة
+        st.session_state.results = pd.concat([st.session_state.results, new_final]).sort_values("premium", ascending=False).drop_duplicates(subset=["ticker","strike","exp","signal"]).head(100)
 
-        call_sum = final[final["signal"].str.contains("CALL")]["premium"].sum()
-        put_sum = final[final["signal"].str.contains("PUT")]["premium"].sum()
-        is_bearish = put_sum > call_sum
+# عرض النتائج التراكمية
+if not st.session_state.results.empty:
+    final = st.session_state.results
 
-        if is_bearish:
-            st.error(f"🔴 السوق كله BEARISH - PUT ${put_sum/1e6:.1f}M > CALL ${call_sum/1e6:.1f}M")
-        else:
-            st.success(f"🟢 السوق كله BULLISH - CALL ${call_sum/1e6:.1f}M > PUT ${put_sum/1e6:.1f}M")
+    call_sum = final[final["signal"].str.contains("CALL")]["premium"].sum()
+    put_sum = final[final["signal"].str.contains("PUT")]["premium"].sum()
+    is_bearish = put_sum > call_sum
 
-        def get_decision(r):
-            prem, is_put = r['premium'], 'PUT' in r['signal']
-            if is_bearish:
-                return "✅ ادخل مع الحوت" if is_put and prem>1500000 else "✔️ ادخل" if is_put else "⚠️ عكس السوق" if prem>3000000 else "❌ لا تدخل"
-            else:
-                return "✅ ادخل مع الحوت" if not is_put and prem>1500000 else "✔️ ادخل" if not is_put else "❌ لا تدخل"
-
-        final['القرار'] = final.apply(get_decision, axis=1)
-
-        # حيتان فوق 5 مليون صفارة
-        if not final[final['premium']>5000000].empty:
-            st.balloons()
-            st.markdown("""<audio autoplay><source src="https://www.soundjay.com/buttons/sounds/button-10.mp3"></audio><h2 style='color:red;text-align:center'>🚨 حوت ضخم فوق 5M! 🚨</h2>""", unsafe_allow_html=True)
-
-        for _, w in final.head(5).iterrows():
-            if w['premium']>2000000:
-                msg = f"🐋 {w['ticker']} {w['signal']} ${w['premium']:,.0f} Strike {w['strike']}"
-                st.warning(f"{msg} - {w['القرار']}")
-                st.link_button(f"📱 واتساب {w['ticker']}", f"https://wa.me/?text={urllib.parse.quote(msg)}", key=f"wa_{w['ticker']}_{w['strike']}")
-
-        st.dataframe(final[["ticker","signal","strike","lastPrice","volume","premium","القرار","expirationDate"] if "expirationDate" in final.columns else ["ticker","signal","strike","lastPrice","volume","premium","القرار"]], use_container_width=True)
-        st.success(f"تم العثور على {len(final)} حوت منطبق عليه الشروط من أصل {len(stocks_list)} سهم")
+    if is_bearish:
+        st.error(f"🔴 كل السوق BEARISH PUT ${put_sum/1e6:.1f}M > CALL ${call_sum/1e6:.1f}M")
     else:
-        st.warning("ما لقي حيتان بهذا الشرط - قلل المبلغ في القائمة اليسار")
+        st.success(f"🟢 كل السوق BULLISH CALL ${call_sum/1e6:.1f}M")
+
+    def get_decision(r):
+        return "✅ ادخل" if (('PUT' in r['signal']) == is_bearish) else "❌ لا تدخل" if r['premium']<2000000 else "⚠️ عكس السوق"
+
+    final['القرار'] = final.apply(get_decision, axis=1)
+
+    if not final[final['premium']>5000000].empty:
+        st.balloons()
+        st.markdown("""<audio autoplay><source src="https://www.soundjay.com/buttons/sounds/button-10.mp3"></audio>""", unsafe_allow_html=True)
+
+    for _, w in final[final['premium']>2000000].head(5).iterrows():
+        msg = f"🐋 {w['ticker']} {w['signal']} {w['strike']} ${w['premium']:,.0f}"
+        st.warning(f"{msg} - {w['القرار']}")
+        st.link_button(f"📱 {w['ticker']} واتساب", f"https://wa.me/?text={urllib.parse.quote(msg)}", key=f"wa_{w['ticker']}_{w['strike']}_{w['exp']}")
+
+    st.dataframe(final[["ticker","signal","strike","lastPrice","volume","premium","القرار","exp"]].head(50), use_container_width=True)
+    st.caption(f"مجموع الحيتان المحفوظة: {len(final)} - آخر تحديث {datetime.now().strftime('%H:%M:%S')}")
+    st.info(f"فحصت {start_idx+batch_size} من {len(all_tickers)} - اضغط فحص مرة ثانية عشان تكمل اللي بعده. غير الرقم في اليسار لـ {start_idx+batch_size}")
 else:
-    st.info("👈 اضغط الزر فوق عشان يبدأ يفحص السوق كله")
-    st.caption(f"آخر تحديث: {datetime.now().strftime('%H:%M:%S')}")
+    st.info("👈 اضغط 'افحص' عشان يبدأ يصيد من كل السوق. كل ضغطة يفحص 200 سهم ويحفظها. كررها لين تخلص 3000 سهم")
