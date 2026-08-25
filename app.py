@@ -4,66 +4,54 @@ import pandas as pd
 from datetime import datetime
 import urllib.parse
 
-st.set_page_config(page_title="كاشف الحيتان V6", page_icon="🐋", layout="wide")
+st.set_page_config(layout="wide")
 st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 
-st.title("🐋 كاشف الحيتان V6 - مع اشارات الشراء")
-st.caption(f"اخر تحديث: {datetime.now().strftime('%H:%M:%S')} بتوقيت السعودية")
+st.title("Whale Detector V6.3 - Live")
+st.caption(f"Live Price - Last: {datetime.now().strftime('%H:%M:%S')} - Refresh 60s")
 
-ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX", "GOOGL", "SPX", "IWM", "DIA"]
+stocks = ["TSLA","NVDA","AAPL","SPY","QQQ","MSFT","AMZN","META","AMD","NFLX"]
+min_p = st.sidebar.slider("Min Premium $", 50000, 500000, 100000)
 
-min_premium = st.sidebar.slider("اقل قيمة للحوت $", 50000, 500000, 100000, step=10000)
-
-all_whales = []
-progress = st.progress(0)
-for i, ticker in enumerate(ACTIVE_STOCKS):
-    progress.progress((i+1)/len(ACTIVE_STOCKS))
+all_data = []
+for t in stocks:
     try:
-        stock = yf.Ticker(ticker)
-        if not stock.options:
-            continue
-        for exp in stock.options[:2]:
-            chain = stock.option_chain(exp)
-            for df_type, df in [("CALL شراء", chain.calls), ("PUT بيع", chain.puts)]:
-                if df.empty:
-                    continue
+        s = yf.Ticker(t)
+        price = s.fast_info['last_price']
+        if not s.options: continue
+        for exp in s.options[:2]:
+            chain = s.option_chain(exp)
+            for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                if df.empty: continue
                 df = df.copy()
-                df['premium'] = df['lastPrice'] * df['volume'] * 100
-                whales = df[(df['volume'] > 300) & (df['premium'] >= min_premium)].copy()
-                if not whales.empty:
-                    whales['ticker'] = ticker
-                    whales['signal'] = df_type
-                    whales['expiry'] = exp
-                    all_whales.append(whales)
-    except:
-        continue
-progress.empty()
+                df["premium"] = df["lastPrice"] * df["volume"] * 100
+                df["live_price"] = price
+                f = df[(df["volume"]>200) & (df["premium"]>=min_p)]
+                if not f.empty:
+                    f["ticker"]=t
+                    f["signal"]=typ
+                    f["expiry"]=exp
+                    # رابط مباشر
+                    f["link"] = f"https://finance.yahoo.com/quote/{t}/options/{exp}"
+                    all_data.append(f)
+    except: continue
 
-if all_whales:
-    final_df = pd.concat(all_whales).sort_values('premium', ascending=False).head(100)
+if all_data:
+    final = pd.concat(all_data).sort_values("premium", ascending=False).head(40)
+    call_sum = final[final["signal"].str.contains("CALL")]["premium"].sum()
+    put_sum = final[final["signal"].str.contains("PUT")]["premium"].sum()
+    mood = "BULLISH" if call_sum>put_sum else "BEARISH"
+    st.success(f"Mood: {mood} | Live Data | CALL ${call_sum:,.0f} vs PUT ${put_sum:,.0f}")
 
-    call_premium = final_df[final_df['signal'].str.contains("CALL")]['premium'].sum()
-    put_premium = final_df[final_df['signal'].str.contains("PUT")]['premium'].sum()
+    # جدول مع روابط
+    st.dataframe(
+        final[["ticker","signal","strike","live_price","lastPrice","premium","expiry","link"]],
+        use_container_width=True,
+        column_config={"link": st.column_config.LinkColumn("Yahoo Link")}
+    )
     
-    if call_premium > put_premium:
-        mood = f"السوق متفائل - سيولة الشراء ${call_premium:,.0f} > البيع"
-        st.success(f"المزاج العام: {mood} - CALL")
-    else:
-        mood = f"السوق متشائم - سيولة البيع ${put_premium:,.0f} > الشراء"
-        st.error(f"المزاج العام: {mood} - PUT")
-
-    top = final_df.iloc[0]
-    st.markdown(f"<div style='background:#333;padding:15px;border-radius:10px;color:white;text-align:center;font-size:22px'>اكبر حوت: {top['ticker']} {top['signal']} | ${top['premium']:,.0f}</div>", unsafe_allow_html=True)
-
-    wa_msg = f"كاشف الحيتان V6 - {mood}\n\n"
-    for _, row in final_df.head(5).iterrows():
-        wa_msg += f"{row['ticker']} {row['signal']} {row['strike']} = ${row['premium']:,.0f}\n"
-    wa_msg += f"\nhttps://kashf-hetan-2130.streamlit.app/"
-    
-    st.link_button(f"ارسل الاشارات لواتساب", f"https://wa.me/?text={urllib.parse.quote(wa_msg)}", use_container_width=True, type="primary")
-
-    st.dataframe(final_df[['ticker','signal','strike','lastPrice','volume','premium','expiry']], use_container_width=True, height=700)
+    top = final.iloc[0]
+    wa = f"Whale V6.3 LIVE {mood} {top['ticker']} {top['signal']} ${top['premium']:,.0f} Live:${top['live_price']} {top['link']}"
+    st.link_button("Send WhatsApp with Link", f"https://wa.me/?text={urllib.parse.quote(wa)}", type="primary", use_container_width=True)
 else:
-    st.warning("السوق مغلق حاليا - يفتح 4:30 العصر بتوقيت السعودية")
-
-st.info("V6: CALL = الحيتان تشتري (يتوقعون صعود) | PUT = الحيتان تبيع (يتوقعون هبوط)")
+    st.warning("Market Closed - Opens 4:30 PM KSA - Prices are LIVE during market")
