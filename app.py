@@ -7,7 +7,7 @@ import time
 
 st.set_page_config(layout="wide")
 st.title("Whale V8.2 - فحص تلقائي لكل السوق")
-st.caption(f"آخر تحديث: {datetime.now().strftime('%H:%M:%S')}")
+st.caption(f"اخر تحديث: {datetime.now().strftime('%H:%M:%S')}")
 
 @st.cache_data(ttl=86400)
 def get_all_tickers():
@@ -29,12 +29,71 @@ if 'results' not in st.session_state:
 if 'current_idx' not in st.session_state:
     st.session_state.current_idx = 0
 
-min_prem = st.sidebar.slider("أقل مبلغ حوت $", 500000, 5000000, 1000000, 250000)
+min_prem = st.sidebar.slider("اقل مبلغ حوت $", 500000, 5000000, 1000000, 250000)
 batch = 100
-auto = st.sidebar.checkbox("🔄 فحص تلقائي لكل السوق", value=True)
+auto = st.sidebar.checkbox("فحص تلقائي لكل السوق", value=True)
 st.sidebar.write(f"فحصنا: {st.session_state.current_idx} / {len(all_tickers)}")
 st.sidebar.write(f"حيتان محفوظة: {len(st.session_state.results)}")
 
+if st.sidebar.button("امسح وابدأ من جديد"):
+    st.session_state.results = pd.DataFrame()
+    st.session_state.current_idx = 0
+    st.rerun()
+
+if auto and st.session_state.current_idx < len(all_tickers):
+    start = st.session_state.current_idx
+    end = min(start + batch, len(all_tickers))
+    batch_list = all_tickers[start:end]
+    st.info(f"يفحص تلقائي: {start} الى {end} - باقي {len(all_tickers)-end}")
+    prog = st.progress(start/len(all_tickers))
+    all_data = []
+    for t in batch_list:
+        try:
+            s = yf.Ticker(t)
+            if not s.options: continue
+            chain = s.option_chain(s.options[0])
+            for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                if df.empty: continue
+                df["premium"] = df["lastPrice"] * df["volume"] * 100
+                f = df[(df["premium"]>=min_prem) & (df["volume"]>=200)].copy()
+                if not f.empty:
+                    f["ticker"]=t
+                    f["signal"]=typ
+                    f["exp"]=s.options[0]
+                    all_data.append(f)
+        except:
+            pass
+    if all_data:
+        new_df = pd.concat(all_data)
+        st.session_state.results = pd.concat([st.session_state.results, new_df]).sort_values("premium", ascending=False).drop_duplicates(subset=["ticker","strike","exp","signal"]).head(200)
+    st.session_state.current_idx = end
+    prog.progress(end/len(all_tickers))
+    time.sleep(2)
+    st.rerun()
+
+if not st.session_state.results.empty:
+    final = st.session_state.results.sort_values("premium", ascending=False)
+    call_sum = final[final["signal"].str.contains("CALL")]["premium"].sum()
+    put_sum = final[final["signal"].str.contains("PUT")]["premium"].sum()
+    is_bearish = put_sum > call_sum
+    if is_bearish:
+        st.error(f"BEARISH PUT ${put_sum/1e6:.1f}M > CALL ${call_sum/1e6:.1f}M")
+    else:
+        st.success(f"BULLISH CALL ${call_sum/1e6:.1f}M - {len(final)} حوت")
+    final['القرار'] = final.apply(lambda r: "ادخل" if (('PUT' in r['signal']) == is_bearish) else "عكس السوق" if r['premium']>3000000 else "لا تدخل", axis=1)
+    if not final[final['premium']>5000000].empty:
+        st.balloons()
+        st.markdown("""<audio autoplay><source src="https://www.soundjay.com/buttons/sounds/button-10.mp3"></audio><h3 style='color:red;text-align:center'>حوت فوق 5M!</h3>""", unsafe_allow_html=True)
+    for _, w in final.head(5).iterrows():
+        if w['premium']>2000000:
+            msg = f"حوت {w['ticker']} {w['signal']} {w['strike']} ${w['premium']:,.0f}"
+            st.warning(f"{msg} - {w['القرار']}")
+            st.link_button(f"واتساب {w['ticker']}", f"https://wa.me/?text={urllib.parse.quote(msg)}", key=f"wa_{w['ticker']}_{w['strike']}_{w['exp']}_{w['premium']}")
+    st.dataframe(final[["ticker","signal","strike","lastPrice","volume","premium","القرار","exp"]].head(100), use_container_width=True)
+    if st.session_state.current_idx >= len(all_tickers):
+        st.success("خلص فحص كل السوق 3000 سهم!")
+else:
+    st.info("شغل فحص تلقائي من اليسار عشان يبدأ")
 if st.sidebar.button("🗑️ امسح وابدأ من جديد"):
     st.session_state.results = pd.DataFrame()
     st.session_state.current_idx = 0
