@@ -3,49 +3,39 @@ from datetime import datetime, timezone
 import time
 import streamlit.components.v1 as components
 
-st.set_page_config(layout="wide", page_title="Whale V21 Clear", initial_sidebar_state="expanded")
-components.html("<script>setTimeout(function(){window.parent.location.reload();}, 35000);</script>", height=0)
+st.set_page_config(layout="wide", page_title="Whale V22 Custom Refresh", initial_sidebar_state="expanded")
 
-# ===== إصلاح الألوان - خلفية بيضاء وكتابة سوداء واضحة =====
+# وقت التحديث من السيشن
+if "refresh_sec" not in st.session_state: st.session_state.refresh_sec=60
+
+# تحديث تلقائي حسب اختيارك
+components.html(f"<script>setTimeout(function(){{window.parent.location.reload();}}, {st.session_state.refresh_sec*1000});</script>", height=0)
+
 st.markdown("""
 <style>
-/* الخلفية كلها بيضاء */
 .stApp {background:#ffffff!important;}
 [data-testid="stHeader"] {background:#ffffff!important;}
-h1, h2, h3, h4, p, div, span {color:#0f172a!important;}
-/* العناوين كبيرة وواضحة */
-h1 {color:#0f172a!important; font-weight:900!important; font-size:32px!important; background:#ffffff; padding:10px; border-radius:10px;}
-h2, h3 {color:#1e293b!important; font-weight:800!important; background:#f1f5f9; padding:8px 12px; border-radius:8px; border-left:4px solid #3b82f6;}
-
-/* السايد بار */
-[data-testid="stSidebar"] {min-width:365px!important; max-width:385px!important; background:#f8fafc!important; border-right:3px solid #e2e8f0!important;}
+h1, h2, h3 {color:#0f172a!important; font-weight:900!important;}
+[data-testid="stSidebar"] {min-width:380px!important; max-width:400px!important; background:#f8fafc!important; border-right:3px solid #e2e8f0!important;}
 [data-testid="stSidebar"] * {color:#0f172a!important; font-weight:700!important; font-size:14px!important;}
 .stButton>button {width:100%!important; height:48px!important; background:#3b82f6!important; color:#fff!important; border:none!important; border-radius:12px!important; font-weight:800!important;}
-
-/* الجدول واضح جدا */
 .whale-table {width:100%; border-collapse:separate; border-spacing:0 8px;}
 .whale-table th {background:#0f172a!important; color:#ffffff!important; padding:12px 8px; text-align:center; font-size:12px; font-weight:800;}
 .whale-table td {background:#ffffff!important; padding:12px 8px; text-align:center; font-weight:700; font-size:13px; color:#0f172a!important; border:1px solid #e2e8f0;}
-.whale-table tr {box-shadow:0 2px 8px #0001; border-radius:10px;}
-
-.badge-call {background:#22c55e!important; color:#ffffff!important; padding:5px 10px; border-radius:12px; font-size:11px; font-weight:800;}
-.badge-put {background:#ef4444!important; color:#ffffff!important; padding:5px 10px; border-radius:12px; font-size:11px; font-weight:800;}
-.optprice {color:#7c3aed!important; font-weight:900!important; background:#f5f3ff!important; padding:5px 10px; border-radius:8px; border:1px solid #ddd6fe;}
+.badge-call {background:#22c55e!important; color:#fff!important; padding:5px 10px; border-radius:12px; font-size:11px; font-weight:800;}
+.badge-put {background:#ef4444!important; color:#fff!important; padding:5px 10px; border-radius:12px; font-size:11px; font-weight:800;}
+.optprice {color:#7c3aed!important; font-weight:900!important; background:#f5f3ff!important; padding:5px 10px; border-radius:8px;}
 .premium {color:#1d4ed8!important; font-weight:900!important; font-size:14px!important;}
-.time-new {background:#22c55e!important; color:#ffffff!important; padding:4px 8px; border-radius:10px; font-size:11px; font-weight:800;}
-.time-old {background:#64748b!important; color:#ffffff!important; padding:4px 8px; border-radius:10px; font-size:11px;}
-
-/* كرت التنبيه واضح */
+.time-new {background:#22c55e!important; color:#fff!important; padding:4px 8px; border-radius:10px; font-size:11px; font-weight:800;}
+.time-old {background:#64748b!important; color:#fff!important; padding:4px 8px; border-radius:10px; font-size:11px;}
 .alert-card {background:#fefce8!important; border:3px solid #22c55e!important; padding:16px!important; border-radius:16px!important; text-align:center!important; box-shadow:0 4px 12px #0002;}
-.alert-card b,.alert-card div {color:#0f172a!important; font-weight:800!important; font-size:14px!important;}
-
-/* رسائل النجاح والتحذير */
-.stSuccess,.stInfo,.stWarning {background:#f1f5f9!important; border:2px solid #3b82f6!important; color:#0f172a!important;}
-.stSuccess *,.stInfo *,.stWarning * {color:#0f172a!important; font-weight:700!important;}
+.alert-card * {color:#0f172a!important; font-weight:800!important;}
+.countdown {background:#0f172a!important; color:#fff!important; padding:10px 16px; border-radius:12px; text-align:center; font-weight:900; font-size:16px; margin:8px 0;}
+.countdown * {color:#fff!important;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🐋 Whale V21 - واضح 100%")
+st.title("🐋 Whale V22 - تحكم بوقت التحديث ⏱️")
 
 def get_tickers():
     return ["SPY","QQQ","TSLA","NVDA","AAPL","AMZN","META","MSFT","GOOGL","AMD","NFLX","COIN","MSTR","PLTR","GME","MARA","SOFI","NIO","JPM","BAC","XOM","LLY","AVGO","ARM","GLD","IWM"]
@@ -67,22 +57,59 @@ if "current_idx" not in st.session_state: st.session_state.current_idx=0
 if "page" not in st.session_state: st.session_state.page="LASTHOUR"
 if "sent" not in st.session_state: st.session_state.sent=set()
 if "new_whales" not in st.session_state: st.session_state.new_whales=[]
+if "last_refresh" not in st.session_state: st.session_state.last_refresh=datetime.now()
 
-st.sidebar.markdown("## 🎛️ لوحة التحكم - واضحة")
-min_prem=st.sidebar.slider("💰 اقل حوت", 500000, 5000000, 1000000, 250000, key="min21")
-time_filter=st.sidebar.select_slider("⏰ فلتر الوقت", options=["آخر 15 دقيقة","آخر ساعة","آخر 3 ساعات","اليوم كامل"], value="آخر ساعة", key="tf21")
-bell_on=st.sidebar.checkbox("🔔 جرس حوت جديد", True, key="bell21")
-smart_filter=st.sidebar.checkbox("🧠 اتجاه واحد لكل شركة", True, key="sm21")
-one_alert=st.sidebar.checkbox("🔕 تنبيه واحد لكل شركة", True, key="one21")
-auto=st.sidebar.checkbox("⚡ فحص تلقائي", True, key="au21")
+st.sidebar.markdown("## 🎛️ لوحة التحكم")
+
+# === اختيار وقت التحديث ===
+st.sidebar.markdown("### ⏱️ وقت التحديث التلقائي")
+refresh_option=st.sidebar.select_slider(
+    "اختر كل كم يحدث؟",
+    options=["15 ثانية","30 ثانية","1 دقيقة","2 دقيقة","3 دقائق","5 دقائق","10 دقائق","يدوي فقط"],
+    value="1 دقيقة",
+    key="refresh_slider"
+)
+map_sec={"15 ثانية":15,"30 ثانية":30,"1 دقيقة":60,"2 دقيقة":120,"3 دقائق":180,"5 دقائق":300,"10 دقائق":600,"يدوي فقط":999999}
+st.session_state.refresh_sec=map_sec[refresh_option]
+
+if refresh_option=="يدوي فقط":
+    st.sidebar.warning("⏸️ التحديث التلقائي متوقف - اضغط تحديث الآن يدويا")
+else:
+    st.sidebar.success(f"⏱️ يحدث كل {refresh_option} - الجرس شغال")
+
+min_prem=st.sidebar.slider("💰 اقل حوت", 500000, 5000000, 1000000, 250000, key="min22")
+time_filter=st.sidebar.select_slider("⏰ فلتر الحيتان", options=["آخر 15 دقيقة","آخر ساعة","آخر 3 ساعات","اليوم كامل"], value="آخر ساعة", key="tf22")
+bell_on=st.sidebar.checkbox("🔔 جرس حوت جديد", True, key="bell22")
+smart_filter=st.sidebar.checkbox("🧠 اتجاه واحد لكل شركة", True, key="sm22")
+one_alert=st.sidebar.checkbox("🔕 تنبيه واحد لكل شركة", True, key="one22")
+auto=st.sidebar.checkbox("⚡ فحص تلقائي", True, key="au22")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⏱️ العد التنازلي")
+# عد تنازلي بصري
+components.html(f"""
+<div id="countdown" style="background:#0f172a; color:#fff; padding:12px; border-radius:12px; text-align:center; font-weight:900; font-size:18px; font-family:monospace;">
+⏱️ التحديث بعد <span id="timer">{st.session_state.refresh_sec}</span> ثانية
+</div>
+<script>
+let sec={st.session_state.refresh_sec};
+let el=document.getElementById('timer');
+let interval=setInterval(()=>{{ sec--; if(el) el.textContent=sec; if(sec<=0) clearInterval(interval); }},1000);
+</script>
+""", height=60)
+
+if st.sidebar.button("🔄 تحديث الآن يدويا", key="manual_refresh"):
+    st.session_state.current_idx=0
+    st.session_state.last_refresh=datetime.now()
+    st.rerun()
 
 st.sidebar.write(f"فحص {st.session_state.current_idx}/{len(get_tickers())} | حيتان {len(st.session_state.results)}")
-if st.sidebar.button("⏰ آخر ساعة", key="b0_21"): st.session_state.page="LASTHOUR"
-if st.sidebar.button("🔥 آخر 15 دقيقة", key="b1_21"): st.session_state.page="15MIN"
-if st.sidebar.button("🏆 اقوى 10", key="b2_21"): st.session_state.page="TOP10"
-if st.sidebar.button("📋 كل اليوم", key="b3_21"): st.session_state.page="ALL"
-if st.sidebar.button("🔔 جرب الجرس", key="btest21"): play_bell(times=2); st.sidebar.success("Ding!")
-if st.sidebar.button("🔄 مسح", key="b7_21"): st.session_state.results=pd.DataFrame(); st.session_state.current_idx=0; st.session_state.new_whales=[]; st.session_state.sent=set(); st.rerun()
+if st.sidebar.button("⏰ آخر ساعة", key="b0_22"): st.session_state.page="LASTHOUR"
+if st.sidebar.button("🔥 آخر 15 دقيقة", key="b1_22"): st.session_state.page="15MIN"
+if st.sidebar.button("🏆 اقوى 10", key="b2_22"): st.session_state.page="TOP10"
+if st.sidebar.button("📋 كل اليوم", key="b3_22"): st.session_state.page="ALL"
+if st.sidebar.button("🔔 جرب الجرس", key="btest22"): play_bell(times=2)
+if st.sidebar.button("🔄 مسح", key="b7_22"): st.session_state.results=pd.DataFrame(); st.session_state.current_idx=0; st.session_state.new_whales=[]; st.session_state.sent=set(); st.rerun()
 
 def get_minutes_filter():
     mapping={"آخر 15 دقيقة":15, "آخر ساعة":60, "آخر 3 ساعات":180, "اليوم كامل":1440}
@@ -97,7 +124,7 @@ if auto and st.session_state.current_idx < len(all_tickers):
     end=min(start+6, len(all_tickers))
     st.progress(end/len(all_tickers))
     mins=get_minutes_filter()
-    st.info(f"🔴 LIVE يفحص {start}-{end} | فلتر {mins} دقيقة")
+    st.info(f"🔴 LIVE يفحص {start}-{end} | فلتر {mins} دقيقة | التحديث كل {refresh_option}")
     new_rows=[]
     for t in all_tickers[start:end]:
         try:
@@ -143,8 +170,12 @@ if auto and st.session_state.current_idx < len(all_tickers):
         combined=pd.concat([st.session_state.results, new_df]).sort_values("premium", ascending=False).drop_duplicates(subset=["ticker","strike","exp","signal"]).head(500) if not st.session_state.results.empty else new_df
         st.session_state.results=combined
     st.session_state.current_idx=end
-    time.sleep(0.8)
-    st.rerun()
+    if st.session_state.current_idx>=len(all_tickers):
+        st.session_state.current_idx=0
+        st.session_state.last_refresh=datetime.now()
+    else:
+        time.sleep(0.5)
+        st.rerun()
 else:
     if st.session_state.current_idx >= len(all_tickers): st.session_state.current_idx=0
 
@@ -180,10 +211,12 @@ if not st.session_state.results.empty:
             with cols[i]:
                 ago=int(w["minutes_ago"])
                 txt=f"{ago} دقيقة" if ago<60 else f"{ago//60} ساعة"
-                st.markdown(f"<div class='alert-card'><b style='font-size:18px'>🔔 {w['ticker']} جديد!</b><br><div>{w['signal']} {w['strike']}</div><div style='color:#7c3aed!important;'>${w['opt_price']:.2f} | ${w['premium_M']:.2f}M</div><div>قبل {txt}</div></div>", unsafe_allow_html=True)
-        if st.button("✖️ اخفاء التنبيه", key="hide21"): st.session_state.new_whales=[]; st.rerun()
+                st.markdown(f"<div class='alert-card'><b style='font-size:18px'>🔔 {w['ticker']} جديد!</b><br>{w['signal']} {w['strike']}<br>${w['opt_price']:.2f} | ${w['premium_M']:.2f}M<br>قبل {txt}</div>", unsafe_allow_html=True)
+        if st.button("✖️ اخفاء التنبيه", key="hide22"): st.session_state.new_whales=[]; st.rerun()
 
-    st.success(f"⏰ فلتر: آخر {mins} دقيقة | {len(final)} حوت | {datetime.now().strftime('%H:%M:%S')} | خلفية بيضاء واضحة ✅")
+    # عد تنازلي فوق الجدول
+    if refresh_option!="يدوي فقط":
+        st.markdown(f"<div class='countdown'>⏱️ التحديث التلقائي كل {refresh_option} | آخر تحديث {st.session_state.last_refresh.strftime('%H:%M:%S')} | فلتر {mins} دقيقة</div>", unsafe_allow_html=True)
 
     def build_html(df):
         html='<table class="whale-table"><tr><th>الشركة</th><th>النوع</th><th>STRIKE</th><th>سعر الأوبشن</th><th>قيمة الحوت</th><th>VOL</th><th>⏰ متى دخل</th><th>القرار</th></tr>'
@@ -197,7 +230,8 @@ if not st.session_state.results.empty:
         return html
 
     st.markdown(build_html(final), unsafe_allow_html=True)
+    st.info(f"💡 **تحكم كامل:** على اليسار اختر وقت التحديث من 15 ثانية إلى 10 دقائق أو يدوي فقط. العد التنازلي يوضح كم باقي. زر تحديث الآن يحدث فورا.")
 else:
     st.warning("⏳ يفحص...")
 
-st.caption(f"Last {datetime.now().strftime('%H:%M:%S')} | V21 White Clear - خلفية بيضاء وكتابة واضحة")
+st.caption(f"Last {datetime.now().strftime('%H:%M:%S')} | V22 Custom Refresh | تحديث كل {refresh_option}")
