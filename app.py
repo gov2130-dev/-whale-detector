@@ -3,38 +3,42 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import urllib.parse
-import time
 
-st.set_page_config(page_title="كاشف الحيتان V7", page_icon="🐋", layout="wide")
-st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
+st.set_page_config(layout="wide")
+st.title("Whale Detector")
+st.write(datetime.now().strftime("%H:%M:%S"))
 
-st.title("🐋 كاشف الحيتان V7 - رادار تنبيه الحوت الجديد")
-st.caption(f"اخر تحديث: {datetime.now().strftime('%H:%M:%S')}")
+stocks = ["TSLA","NVDA","AAPL","SPY","QQQ"]
+all_data = []
 
-ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX", "GOOGL", "SPX"]
-
-min_premium = st.sidebar.slider("اقل قيمة للتنبيه $", 1000000, 50000000, 20000000, step=1000000)
-st.sidebar.info(f"سيرسل تنبيه اذا دخل حوت فوق ${min_premium:,.0f}")
-
-# تخزين الحيتان القديمة لمعرفة الجديد
-if 'old_whales' not in st.session_state:
-    st.session_state.old_whales = set()
-
-all_whales = []
-for ticker in ACTIVE_STOCKS:
+for t in stocks:
     try:
-        stock = yf.Ticker(ticker)
-        if not stock.options: continue
-        for exp in stock.options[:1]:
-            chain = stock.option_chain(exp)
-            for df_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
-                if df.empty: continue
-                df = df.copy()
-                df['premium'] = df['lastPrice'] * df['volume'] * 100
-                whales = df[(df['volume'] > 300) & (df['premium'] >= 100000)].copy()
-                if not whales.empty:
-                    whales['ticker'] = ticker
-                    whales['signal'] = df_type
+        s = yf.Ticker(t)
+        if not s.options:
+            continue
+        c = s.option_chain(s.options[0])
+        for typ, df in [("CALL", c.calls), ("PUT", c.puts)]:
+            if df.empty:
+                continue
+            df = df.copy()
+            df["premium"] = df["lastPrice"] * df["volume"] * 100
+            f = df[df["premium"] > 100000]
+            if not f.empty:
+                f["ticker"] = t
+                f["type"] = typ
+                all_data.append(f)
+    except:
+        continue
+
+if all_data:
+    final = pd.concat(all_data).sort_values("premium", ascending=False).head(30)
+    st.dataframe(final[["ticker","type","strike","premium"]], use_container_width=True)
+    txt = "Whale Alert "
+    for _, r in final.head(3).iterrows():
+        txt += f"{r['ticker']} {r['type']} {r['premium']:.0f} "
+    st.link_button("WhatsApp", f"https://wa.me/?text={urllib.parse.quote(txt)}")
+else:
+    st.write("Market Closed")                    whales['signal'] = df_type
                     whales['expiry'] = exp
                     whales['id'] = whales['ticker'] + whales['strike'].astype(str) + whales['expiry']
                     all_whales.append(whales)
