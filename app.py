@@ -3,65 +3,73 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import urllib.parse
+import time
 
-st.set_page_config(page_title="كاشف الحيتان V4", page_icon="🐋", layout="wide")
+st.set_page_config(page_title="كاشف الحيتان V5", page_icon="🐋", layout="wide")
 
-st.markdown("""
-<style>
-.big-whale {background:#ff4b4b; color:white; padding:15px; border-radius:10px; font-size:20px; text-align:center; margin:10px 0}
-.stock-card {border:1px solid #333; padding:10px; border-radius:10px; background:#0e1117}
-</style>
-""", unsafe_allow_html=True)
+# تحديث تلقائي كل 60 ثانية
+st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 
-st.title("🐋 كاشف الحيتان V4 - جميع الأسهم النشطة")
-st.caption(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - يتحدث كل 60 ثانية")
+st.title("🐋 كاشف الحيتان V5 - جميع الأسهم النشطة")
+st.caption(f"آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - يتحدث كل 60 ثانية تلقائياً")
 
-# قائمة الأسهم النشطة
-ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX", "GOOGL", "SPX"]
+# كل الأسهم النشطة بقوة
+ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX", "GOOGL", "SPX", "IWM", "DIA"]
 
-selected_stocks = st.multiselect("اختر الأسهم للمراقبة:", ACTIVE_STOCKS, default=["TSLA","NVDA","AAPL","SPY","QQQ"])
-
-min_premium = st.slider("أقل قيمة للحوت (بالدولار):", 50000, 500000, 100000, step=10000)
+with st.sidebar:
+    st.header("الإعدادات")
+    min_premium = st.slider("أقل قيمة للحوت $", 50000, 500000, 100000, step=10000)
+    st.success(f"يراقب {len(ACTIVE_STOCKS)} سهم نشط الآن")
 
 all_whales = []
-
+progress_text = st.empty()
 progress = st.progress(0)
-for i, ticker in enumerate(selected_stocks):
-    progress.progress((i+1)/len(selected_stocks))
+
+for i, ticker in enumerate(ACTIVE_STOCKS):
+    progress_text.text(f"يفحص: {ticker} ({i+1}/{len(ACTIVE_STOCKS)})")
+    progress.progress((i+1)/len(ACTIVE_STOCKS))
     try:
         stock = yf.Ticker(ticker)
-        # ناخذ اقرب تاريخ انتهاء
         if not stock.options: continue
-        exp = stock.options[0]
-        chain = stock.option_chain(exp)
-
-        for df in [chain.calls, chain.puts]:
-            if df.empty: continue
-            df['premium'] = df['lastPrice'] * df['volume'] * 100
-            whales = df[(df['volume'] > 500) & (df['premium'] >= min_premium)].copy()
-            whales['ticker'] = ticker
-            whales['expiry'] = exp
-            all_whales.append(whales)
+        for exp in stock.options[:2]: # نفحص تاريخين
+            chain = stock.option_chain(exp)
+            for df_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
+                if df.empty or 'volume' not in df.columns: continue
+                df = df.copy()
+                df['premium'] = df['lastPrice'] * df['volume'] * 100
+                whales = df[(df['volume'] > 300) & (df['premium'] >= min_premium)].copy()
+                if not whales.empty:
+                    whales['ticker'] = ticker
+                    whales['type'] = df_type
+                    whales['expiry'] = exp
+                    all_whales.append(whales)
     except: continue
+
 progress.empty()
+progress_text.empty()
 
 if all_whales:
-    final_df = pd.concat(all_whales).sort_values('premium', ascending=False).head(50)
+    final_df = pd.concat(all_whales).sort_values('premium', ascending=False).head(100)
+    
+    # أكبر حوت
+    top = final_df.iloc[0]
+    st.error(f"🚨 أكبر حوت الآن: {top['ticker']} {top['type']} | ${top['premium']:,.0f} | سترايك {top['strike']} | انتهاء {top['expiry']}")
 
-    # تنبيه كبير
-    top_whale = final_df.iloc[0]
-    st.markdown(f'<div class="big-whale">🚨 أكبر حوت الآن: {top_whale["ticker"]} | قيمة ${top_whale["premium"]:,.0f} | سترايك {top_whale["strike"]}</div>', unsafe_allow_html=True)
+    # زر واتساب شامل
+    wa_msg = f"🐋 تنبيه كاشف الحيتان V5\n\n"
+    for idx, row in final_df.head(5).iterrows():
+        wa_msg += f"• {row['ticker']} {row['type']} {row['strike']} = ${row['premium']:,.0f}\n"
+    wa_msg += f"\nرابط الموقع: https://kashf-hetan-2130.streamlit.app/"
+    
+    st.link_button(f"📲 أرسل أهم {min(5, len(final_df))} حيتان لواتساب", f"https://wa.me/?text={urllib.parse.quote(wa_msg)}", use_container_width=True, type="primary")
 
-    # زر واتساب
-    msg = f"🐋 كاشف الحيتان تنبيه:\nأكبر حوت: {top_whale['ticker']} Strike {top_whale['strike']} قيمته ${top_whale['premium']:,.0f}\nالموقع: https://kashf-hetan-2130.streamlit.app/"
-    wa_link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-    st.link_button("📲 أرسل التنبيه لواتساب الآن", wa_link, use_container_width=True)
-
-    st.dataframe(final_df[['ticker','strike','lastPrice','volume','premium','expiry','contractSymbol']], use_container_width=True, height=600)
-
-    # رسم
+    st.dataframe(
+        final_df[['ticker','type','strike','lastPrice','volume','premium','expiry']].style.format({'premium': '${:,.0f}', 'lastPrice': '${:.2f}'}),
+        use_container_width=True, height=700
+    )
     st.bar_chart(final_df.head(10).set_index('ticker')['premium'])
 else:
-    st.warning("لا يوجد حيتان حاليا بهذا الفلتر، جرب تقلل قيمة الفلتر")
+    st.warning("السوق هادي حاليا، لا يوجد حيتان فوق الفلتر. قلل الفلتر أو انتظر الافتتاح الأمريكي (4:30 عصراً بتوقيت السعودية)")
 
-st.button("🔄 تحديث الآن")
+st.divider()
+st.info("💡 يعمل تلقائياً 24/7 ويراقب 14 سهم نشط + SPX. اضغط زر الواتساب لإرسال التنبيه لقروبك")
