@@ -3,14 +3,14 @@ from datetime import datetime
 import urllib.parse, time
 import streamlit.components.v1 as components
 
-# تحديث تلقائي كل 60 ثانية
-try:
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=60000, key="auto_refresh_60s")
-except:
-    st.warning("ثبت الإضافة: pip install streamlit-autorefresh")
+st.set_page_config(layout="wide", page_title="Whale V13.1 Fixed", page_icon="🐋")
 
-st.set_page_config(layout="wide", page_title="Whale V13 Talking", page_icon="🐋")
+# تحديث تلقائي كل 60 ثانية بدون مكتبة خارجية
+components.html("""
+<script>
+setTimeout(function(){ window.parent.location.reload(); }, 60000);
+</script>
+""", height=0)
 
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@700;800&display=swap" rel="stylesheet">
@@ -18,23 +18,164 @@ st.markdown("""
 html, body, [class*="css"] {font-family: 'Tajawal', sans-serif!important;}
 .stApp {background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);}
 h1 {color:#fff!important; font-weight:800; text-shadow: 0 2px 10px #00f2ff;}
-[data-testid="stSidebar"] {background: linear-gradient(180deg, #1a1a2e, #16213e); border-right: 2px solid #00f2ff44;}
-.stButton>button {background: linear-gradient(90deg, #00f2ff22, #5a67d822); color:#fff!important; border:1px solid #00f2ff55; border-radius:12px; font-weight:700;}
-.stButton>button:hover {background: linear-gradient(90deg, #00f2ff, #5a67d8); transform:scale(1.03); box-shadow:0 0 15px #00f2ff;}
+[data-testid="stSidebar"] {background: linear-gradient(180deg, #1a1a2e, #16213e);}
+.stButton>button {background:#00f2ff22; color:#fff!important; border:1px solid #00f2ff55; border-radius:12px; font-weight:700; width:100%; margin:3px 0;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🐋 Whale V13.0 - يتكلم ويتحدث آلياً")
-st.markdown("<p style='color:#00f2ff; font-size:18px;'>🔊 يتكلم بصوت + 🔄 يتحدث كل 60 ثانية + 📲 يرسل لجوالك</p>", unsafe_allow_html=True)
+st.title("🐋 Whale V13.1 - يتكلم ويتحدث - FIXED")
+st.markdown("<p style='color:#00f2ff;'>🔄 يتحدث كل 60 ثانية تلقائيا + 🔊 يتكلم بصوت</p>", unsafe_allow_html=True)
 
 @st.cache_data(ttl=86400)
 def get_all_tickers():
+    return ["SPY","QQQ","TSLA","NVDA","AAPL","AMZN","META","MSFT","GOOGL","AMD","NFLX","SMCI","COIN","MSTR","PLTR","GME","MARA","SOFI","NIO","AAL","UAL","JPM","BAC","XOM","LLY","AVGO","ARM","DKNG","GLD","SLV","IWM","TLT","VIX","XLF","XLE","DIS","BA","SOFI","RIVN","LCID"]
+
+HOT_OPTIONS=["SPY","QQQ","TSLA","NVDA","AAPL","AMZN","META","MSFT","GOOGL","AMD","COIN","MSTR","PLTR"]
+
+def send_telegram(msg):
     try:
-        url="https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
-        nasdaq=pd.read_csv(url, sep="\n", header=None)[0].tolist()
-        url2="https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nyse/nyse_tickers.txt"
-        nyse=pd.read_csv(url2, sep="\n", header=None)[0].tolist()
-        all_t=[t for t in nasdaq+nyse if len(t)<=5 and "^" not in t and "/" not in t]
+        token=st.secrets.get("TELEGRAM_TOKEN","")
+        chat=st.secrets.get("TELEGRAM_CHAT_ID","")
+        if not token or not chat: return False
+        url=f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={"chat_id":chat,"text":msg}, timeout=5)
+        return True
+    except: return False
+
+def speak(text):
+    js = f"""
+    <script>
+    var msg = new SpeechSynthesisUtterance();
+    msg.text = `{text}`;
+    msg.lang = 'ar-SA';
+    msg.rate = 0.9;
+    window.speechSynthesis.speak(msg);
+    </script>
+    """
+    components.html(js, height=0)
+
+if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
+if "current_idx" not in st.session_state: st.session_state.current_idx=0
+if "page" not in st.session_state: st.session_state.page="TOP10"
+if "sent" not in st.session_state: st.session_state.sent=set()
+if "last_spoken" not in st.session_state: st.session_state.last_spoken=set()
+
+st.sidebar.title("لوحة التحكم")
+min_prem=st.sidebar.slider("اقل حوت $", 500000, 10000000, 1000000, 500000, key="min_prem_v13")
+auto=st.sidebar.checkbox("فحص تلقائي", value=True, key="auto_v13")
+voice_on=st.sidebar.checkbox("تكلم بصوت", value=True, key="voice_v13")
+mob_on=st.sidebar.checkbox("تنبيه جوال", value=True, key="mob_v13")
+
+st.sidebar.write(f"Scanned {st.session_state.current_idx}/{len(get_all_tickers())}")
+st.sidebar.write(f"Whales {len(st.session_state.results)}")
+st.sidebar.caption("يتحدث كل 60 ثانية تلقائيا")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("النوافذ اضغط")
+if st.sidebar.button("🏆 اقوى 10", key="btn_top10"): st.session_state.page="TOP10"
+if st.sidebar.button("🔥 الاكثر تذبذبا", key="btn_hot"): st.session_state.page="HOT"
+if st.sidebar.button("🟢 CALL فقط", key="btn_call"): st.session_state.page="CALL"
+if st.sidebar.button("🔴 PUT فقط", key="btn_put"): st.session_state.page="PUT"
+if st.sidebar.button("📋 كل الحيتان", key="btn_all"): st.session_state.page="ALL"
+if st.sidebar.button("📱 واتساب", key="btn_wa"): st.session_state.page="WA"
+
+st.sidebar.markdown("---")
+if st.sidebar.button("🔊 جرب الصوت", key="btn_test_voice"):
+    speak("حوت جديد انفيديا كول باي تسعة وعشرين مليون")
+    st.sidebar.success("سمعت؟")
+
+if st.sidebar.button("RESET", key="btn_reset"):
+    st.session_state.results=pd.DataFrame()
+    st.session_state.current_idx=0
+    st.session_state.sent=set()
+    st.session_state.last_spoken=set()
+    st.rerun()
+
+# فحص
+all_tickers=get_all_tickers()
+if auto and st.session_state.current_idx < len(all_tickers):
+    start=st.session_state.current_idx
+    end=min(start+40, len(all_tickers))
+    st.info(f"يفحص {start} الى {end} من {len(all_tickers)} - يتحدث تلقائيا كل 60 ثانية")
+    st.progress(end/len(all_tickers))
+    all_data=[]
+    for t in all_tickers[start:end]:
+        try:
+            s=yf.Ticker(t)
+            if not s.options: continue
+            chain=s.option_chain(s.options[0])
+            for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                if df.empty: continue
+                df["premium"]=df["lastPrice"]*df["volume"]*100
+                f=df[(df["premium"]>=min_prem) & (df["volume"]>=100)].copy()
+                if not f.empty:
+                    f["ticker"]=t; f["signal"]=typ; f["exp"]=s.options[0]; all_data.append(f)
+        except: pass
+    if all_data:
+        new_df=pd.concat(all_data)
+        if not st.session_state.results.empty:
+            combined=pd.concat([st.session_state.results, new_df]).sort_values("premium", ascending=False).drop_duplicates(subset=["ticker","strike","exp","signal"]).head(300)
+        else:
+            combined=new_df.sort_values("premium", ascending=False).head(300)
+        st.session_state.results=combined
+        # تنبيهات
+        for _, w in new_df.sort_values("premium", ascending=False).head(2).iterrows():
+            key=f"{w['ticker']}_{w['strike']}_{int(w['premium'])}"
+            if mob_on and key not in st.session_state.sent and w['premium']>=2000000:
+                send_telegram(f"حوت {w['ticker']} {w['signal']} ${w['premium']/1e6:.1f}M")
+                st.session_state.sent.add(key)
+            if voice_on and key not in st.session_state.last_spoken and w['premium']>=4000000:
+                speak(f"حوت جديد {w['ticker']} {w['signal']} {w['premium']/1e6:.1f} مليون")
+                st.session_state.last_spoken.add(key)
+    st.session_state.current_idx=end
+    time.sleep(1)
+    st.rerun()
+else:
+    if st.session_state.current_idx >= len(all_tickers):
+        st.session_state.current_idx=0
+
+# عرض الشركات
+if not st.session_state.results.empty:
+    final=st.session_state.results.sort_values("premium", ascending=False)
+    call_sum=final[final["signal"].str.contains("CALL")]["premium"].sum()
+    put_sum=final[final["signal"].str.contains("PUT")]["premium"].sum()
+    is_bearish=put_sum>call_sum
+    final["قرار"]=final.apply(lambda r: f"✅ ادخل {r['signal']}" if (("PUT" in r["signal"])==is_bearish) else "❌ لا تدخل", axis=1)
+
+    if is_bearish:
+        st.error(f"🔴 BEARISH هابط PUT ${put_sum/1e6:.1f}M > CALL ${call_sum/1e6:.1f}M - {len(final)} حوت")
+    else:
+        st.success(f"🟢 BULLISH صاعد CALL ${call_sum/1e6:.1f}M > PUT ${put_sum/1e6:.1f}M - {len(final)} حوت")
+
+    page=st.session_state.page
+    st.subheader(page)
+
+    if page=="TOP10":
+        top10=final.head(10)
+        st.dataframe(top10[["ticker","signal","strike","premium","قرار","exp"]], use_container_width=True)
+    elif page=="HOT":
+        st.dataframe(final[final["ticker"].isin(HOT_OPTIONS)].head(20), use_container_width=True)
+    elif page=="CALL":
+        st.dataframe(final[final["signal"].str.contains("CALL")].head(20), use_container_width=True)
+    elif page=="PUT":
+        st.dataframe(final[final["signal"].str.contains("PUT")].head(20), use_container_width=True)
+    elif page=="ALL":
+        st.dataframe(final, use_container_width=True, height=700)
+    elif page=="WA":
+        cols=st.columns(2)
+        for i, (_, w) in enumerate(final.head(10).iterrows()):
+            msg=f"WHALE {w['ticker']} {w['signal']} ${w['premium']/1e6:.2f}M Strike {w['strike']}"
+            with cols[i%2]:
+                st.warning(f"{w['ticker']} {w['signal']} ${w['premium']/1e6:.2f}M - {w['قرار']}")
+                c1,c2=st.columns(2)
+                c1.link_button("واتساب", f"https://wa.me/?text={urllib.parse.quote(msg)}", key=f"wa_main_{i}_{w['ticker']}_{w['premium']}")
+                if c2.button("🔊", key=f"speak_main_{i}_{w['ticker']}_{w['premium']}"):
+                    speak(f"{w['ticker']} {w['signal']}")
+
+else:
+    st.warning("⏳ يفحص السوق... الشركات بتظهر بعد ثواني - الصفحة تتحدث كل 60 ثانية تلقائيا")
+
+st.caption(f"Last {datetime.now().strftime('%H:%M:%S')} | V13.1 FIXED")        all_t=[t for t in nasdaq+nyse if len(t)<=5 and "^" not in t and "/" not in t]
         return list(set(all_t))[:2500]
     except:
         return ["SPY","QQQ","TSLA","NVDA","AAPL","AMZN","META","MSFT","GOOGL","AMD"]
