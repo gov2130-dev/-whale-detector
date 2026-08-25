@@ -3,10 +3,19 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import urllib.parse
+import time
 
 st.set_page_config(layout="wide")
-st.title("Whale V6.7 - تنبيه واتساب")
-st.caption(f"Live: {datetime.now().strftime('%H:%M:%S')}")
+
+# تحديث تلقائي
+auto = st.sidebar.checkbox("🔄 تحديث تلقائي كل دقيقة", value=True)
+if auto:
+    st.sidebar.caption("سيتحدث بعد 60 ثانية...")
+    time.sleep(60)
+    st.rerun()
+
+st.title("Whale V6.8 - تحديث تلقائي")
+st.caption(f"آخر تحديث: {datetime.now().strftime('%H:%M:%S')} - الرياض")
 
 stocks = ["TSLA","NVDA","AAPL","SPY","QQQ","MSFT","AMZN","META","AMD","NFLX"]
 all_data = []
@@ -33,9 +42,9 @@ if all_data:
     is_bearish = put_sum > call_sum
 
     if is_bearish:
-        st.error(f"🔴 BEARISH PUT ${put_sum:,.0f}")
+        st.error(f"🔴 BEARISH PUT ${put_sum:,.0f} > CALL ${call_sum:,.0f}")
     else:
-        st.success(f"🟢 BULLISH CALL ${call_sum:,.0f}")
+        st.success(f"🟢 BULLISH CALL ${call_sum:,.0f} > PUT ${put_sum:,.0f}")
 
     def get_decision(row):
         prem = row['premium']
@@ -52,16 +61,15 @@ if all_data:
 
     final['القرار'] = final.apply(get_decision, axis=1)
 
-    # تنبيه الحيتان الكبار
     whales = final[final['premium'] > 2000000]
     if not whales.empty:
-        st.balloons()
         for _, w in whales.head(3).iterrows():
-            msg = f"🐋 تنبيه حوت: {w['ticker']} {w['signal']} Strike {w['strike']} بمبلغ ${w['premium']:,.0f} القرار: {w['القرار']}"
+            msg = f"🐋 حوت: {w['ticker']} {w['signal']} {w['strike']} ${w['premium']:,.0f} - {w['القرار']}"
             wa_link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
             st.warning(msg)
-            st.link_button(f"ارسل تنبيه {w['ticker']} واتساب", wa_link, use_container_width=True)
+            st.link_button(f"📱 ارسل {w['ticker']} واتساب", wa_link, use_container_width=True)
 
     st.dataframe(final[["ticker","signal","strike","lastPrice","volume","premium","القرار"]], use_container_width=True)
+    st.sidebar.success("متصل ✅")
 else:
     st.warning("Market Closed")
