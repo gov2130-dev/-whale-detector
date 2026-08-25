@@ -3,38 +3,65 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import urllib.parse
-import time
 
-st.set_page_config(page_title="كاشف الحيتان V7", page_icon="🐋", layout="wide")
+st.set_page_config(page_title="Whale Detector V6", layout="wide")
 st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 
-st.title("🐋 كاشف الحيتان V7 - رادار تنبيه الحوت الجديد")
-st.caption(f"اخر تحديث: {datetime.now().strftime('%H:%M:%S')}")
+st.title("Whale Detector V6")
+st.caption(f"Last update: {datetime.now().strftime('%H:%M:%S')}")
 
-ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX", "GOOGL", "SPX"]
+ACTIVE_STOCKS = ["TSLA", "NVDA", "AAPL", "SPY", "QQQ", "MSFT", "AMZN", "META", "AMD", "NFLX"]
 
-min_premium = st.sidebar.slider("اقل قيمة للتنبيه $", 1000000, 50000000, 20000000, step=1000000)
-st.sidebar.info(f"سيرسل تنبيه اذا دخل حوت فوق ${min_premium:,.0f}")
-
-# تخزين الحيتان القديمة لمعرفة الجديد
-if 'old_whales' not in st.session_state:
-    st.session_state.old_whales = set()
+min_premium = st.sidebar.slider("Min Premium $", 50000, 500000, 100000, step=10000)
 
 all_whales = []
-for ticker in ACTIVE_STOCKS:
+progress = st.progress(0)
+for i, ticker in enumerate(ACTIVE_STOCKS):
+    progress.progress((i+1)/len(ACTIVE_STOCKS))
     try:
         stock = yf.Ticker(ticker)
-        if not stock.options: continue
-        for exp in stock.options[:1]:
+        if not stock.options:
+            continue
+        for exp in stock.options[:2]:
             chain = stock.option_chain(exp)
-            for df_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
-                if df.empty: continue
+            for df_type, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                if df.empty:
+                    continue
                 df = df.copy()
                 df['premium'] = df['lastPrice'] * df['volume'] * 100
-                whales = df[(df['volume'] > 300) & (df['premium'] >= 100000)].copy()
+                whales = df[(df['volume'] > 300) & (df['premium'] >= min_premium)].copy()
                 if not whales.empty:
                     whales['ticker'] = ticker
                     whales['signal'] = df_type
+                    whales['expiry'] = exp
+                    all_whales.append(whales)
+    except:
+        continue
+progress.empty()
+
+if all_whales:
+    final_df = pd.concat(all_whales).sort_values('premium', ascending=False).head(50)
+    
+    call_sum = final_df[final_df['signal'].str.contains("CALL")]['premium'].sum()
+    put_sum = final_df[final_df['signal'].str.contains("PUT")]['premium'].sum()
+    
+    if call_sum > put_sum:
+        st.success(f"Market Mood: BULLISH - CALL ${call_sum:,.0f} > PUT ${put_sum:,.0f}")
+    else:
+        st.error(f"Market Mood: BEARISH - PUT ${put_sum:,.0f} > CALL ${call_sum:,.0f}")
+
+    top = final_df.iloc[0]
+    st.metric("Biggest Whale", f"{top['ticker']} {top['signal']}", f"${top['premium']:,.0f}")
+
+    wa_text = f"Whale V6 - Mood: {'BULL' if call_sum>put_sum else 'BEAR'}\n"
+    for _, r in final_df.head(5).iterrows():
+        wa_text += f"{r['ticker']} {r['signal']} {r['strike']} = ${r['premium']:,.0f}\n"
+    wa_text += "https://kashf-hetan-2130.streamlit.app/"
+    
+    st.link_button("Send to WhatsApp", f"https://wa.me/?text={urllib.parse.quote(wa_text)}", use_container_width=True, type="primary")
+    st.dataframe(final_df[['ticker','signal','strike','lastPrice','volume','premium','expiry']], use_container_width=True, height=600)
+else:
+    st.warning("Market closed - opens 4:30 PM KSA time")                    whales['signal'] = df_type
                     whales['expiry'] = exp
                     whales['id'] = whales['ticker'] + whales['strike'].astype(str) + whales['expiry']
                     all_whales.append(whales)
