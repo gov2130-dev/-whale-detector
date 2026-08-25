@@ -152,6 +152,124 @@ if not st.session_state.results.empty:
 else:
     st.warning("⏳ يفحص...")
 
+st.caption(f"Last {datetime.now().strftime('%H:%M:%S')} | V17 Smart Filter")        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id":chat,"text":msg}, timeout=5)
+        return True
+    except: return False
+def speak(txt): components.html(f"<script>var m=new SpeechSynthesisUtterance();m.text=`{txt}`;m.lang='ar-SA';speechSynthesis.speak(m);</script>", height=0)
+
+if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
+if "current_idx" not in st.session_state: st.session_state.current_idx=0
+if "page" not in st.session_state: st.session_state.page="SMART"
+if "sent" not in st.session_state: st.session_state.sent=set()
+if "last_spoken" not in st.session_state: st.session_state.last_spoken=set()
+
+st.sidebar.markdown("## 🎛️ لوحة التحكم")
+min_prem=st.sidebar.slider("💰 اقل حوت", 500000, 5000000, 1000000, 250000, key="min17")
+auto=st.sidebar.checkbox("⚡ فحص تلقائي", True, key="au17")
+voice_on=st.sidebar.checkbox("🔊 تكلم بصوت", True, key="vo17")
+mob_on=st.sidebar.checkbox("📲 تنبيه جوال", True, key="mo17")
+smart_filter=st.sidebar.checkbox("🧠 فلتر ذكي - اتجاه واحد لكل شركة", True, key="smart17")
+st.sidebar.caption("اذا شغلت الفلتر الذكي: يظهر اتجاه واحد فقط لكل شركة (الاقوى)")
+st.sidebar.write(f"فحص {st.session_state.current_idx}/{len(get_tickers())} | حيتان {len(st.session_state.results)}")
+if st.sidebar.button("🧠 الذكي - اتجاه واحد", key="b0_17"): st.session_state.page="SMART"
+if st.sidebar.button("🏆 اقوى 10", key="b1_17"): st.session_state.page="TOP10"
+if st.sidebar.button("🟢 CALL فقط", key="b2_17"): st.session_state.page="CALL"
+if st.sidebar.button("🔴 PUT فقط", key="b3_17"): st.session_state.page="PUT"
+if st.sidebar.button("📋 كل الحيتان (مع الكول والبوت)", key="b4_17"): st.session_state.page="ALL"
+if st.sidebar.button("🔊 جرب الصوت", key="b6_17"): speak("حوت جديد")
+if st.sidebar.button("🔄 مسح", key="b7_17"): st.session_state.results=pd.DataFrame(); st.session_state.current_idx=0; st.rerun()
+
+all_tickers=get_tickers()
+if auto and st.session_state.current_idx < len(all_tickers):
+    start=st.session_state.current_idx
+    end=min(start+8, len(all_tickers))
+    st.info(f"🔴 LIVE يفحص {start} الى {end}")
+    st.progress(end/len(all_tickers))
+    new_rows=[]
+    for t in all_tickers[start:end]:
+        try:
+            s=yf.Ticker(t)
+            if not s.options: continue
+            exp=s.options[0]
+            chain=s.option_chain(exp)
+            for typ, df in [("CALL BUY", chain.calls), ("PUT SELL", chain.puts)]:
+                if df.empty: continue
+                df["premium"]=df["lastPrice"]*df["volume"]*100
+                f=df[(df["premium"]>=min_prem) & (df["volume"]>=50)].copy()
+                for _, r in f.iterrows():
+                    new_rows.append({"ticker":t,"signal":typ,"strike":int(r["strike"]),"opt_price":float(r["lastPrice"]),"bid":float(r.get("bid",0)),"ask":float(r.get("ask",0)),"volume":int(r["volume"]),"premium":r["premium"],"premium_M":r["premium"]/1e6,"exp":exp})
+        except: pass
+    if new_rows:
+        new_df=pd.DataFrame(new_rows)
+        combined=pd.concat([st.session_state.results, new_df]).sort_values("premium", ascending=False).drop_duplicates(subset=["ticker","strike","exp","signal"]).head(400) if not st.session_state.results.empty else new_df
+        st.session_state.results=combined
+    st.session_state.current_idx=end
+    time.sleep(1)
+    st.rerun()
+else:
+    if st.session_state.current_idx >= len(all_tickers): st.session_state.current_idx=0
+
+if not st.session_state.results.empty:
+    final_raw=st.session_state.results.sort_values("premium", ascending=False).copy()
+
+    # === الفلتر الذكي: لكل شركة اتجاه واحد فقط ===
+    if smart_filter or st.session_state.page=="SMART":
+        smart_rows=[]
+        for ticker in final_raw["ticker"].unique():
+            t_df=final_raw[final_raw["ticker"]==ticker]
+            call_sum=t_df[t_df["signal"].str.contains("CALL")]["premium"].sum()
+            put_sum=t_df[t_df["signal"].str.contains("PUT")]["premium"].sum()
+            dominant="CALL" if call_sum>=put_sum else "PUT"
+            # خذ فقط صفقات الاتجاه الغالب
+            keep=t_df[t_df["signal"].str.contains(dominant)].sort_values("premium", ascending=False).head(3)
+            for _, r in keep.iterrows():
+                smart_rows.append(r)
+        final=pd.DataFrame(smart_rows).sort_values("premium", ascending=False) if smart_rows else final_raw
+        st.success(f"🧠 فلتر ذكي شغال: لكل شركة اتجاه واحد فقط (الأقوى) - {len(final)} صفقة من {len(final_raw)} | مثال AMZN كان فيها CALL و PUT، الآن يظهر فقط الأقوى")
+    else:
+        final=final_raw
+        st.warning(f"📋 بدون فلتر: يظهر كل شيء - CALL و PUT لنفس الشركة - {len(final)} صفقة")
+
+    final["قرار"]=final.apply(lambda r: "YES", axis=1) # في الوضع الذكي كلها YES لانها الاتجاه الغالب
+    final["decision_text"]=final.apply(lambda r: f"✅ ادخل {r['signal']}", axis=1)
+
+    def build_html(df):
+        html='<table class="whale-table"><tr><th>الشركة</th><th>النوع</th><th>STRIKE</th><th>سعر الأوبشن</th><th>BID/ASK</th><th>قيمة الحوت</th><th>VOL</th><th>القرار</th><th>الانتهاء</th></tr>'
+        for _, w in df.iterrows():
+            badge=f'<span class="badge-call">{w["signal"]}</span>' if "CALL" in w["signal"] else f'<span class="badge-put">{w["signal"]}</span>'
+            dec=f'<span class="decision-yes">✅ ادخل</span>'
+            bidask=f"{w['bid']:.2f}/{w['ask']:.2f}" if w['bid']>0 else "-"
+            opt=f'<span class="optprice">${w["opt_price"]:.2f}</span>'
+            html+=f"<tr><td style='font-weight:900'>{w['ticker']}</td><td>{badge}</td><td>{w['strike']}</td><td>{opt}</td><td style='font-size:11px'>{bidask}</td><td class='premium'>${w['premium_M']:.2f}M</td><td>{w['volume']}</td><td>{dec}</td><td style='font-size:11px'>{w['exp']}</td></tr>"
+        html+="</table>"
+        return html
+
+    p=st.session_state.page
+    if p=="SMART":
+        st.markdown("### 🧠 فلتر ذكي - كل شركة تظهر مرة واحدة فقط بالاتجاه الأقوى")
+        st.markdown(build_html(final.head(20)), unsafe_allow_html=True)
+        # جدول يوضح التناقض
+        st.markdown("#### 📊 ملخص التناقضات (قبل الفلتر)")
+        conflict=[]
+        for ticker in final_raw["ticker"].unique():
+            t_df=final_raw[final_raw["ticker"]==ticker]
+            c=t_df[t_df["signal"].str.contains("CALL")]["premium"].sum()/1e6
+            p_=t_df[t_df["signal"].str.contains("PUT")]["premium"].sum()/1e6
+            if c>0 and p_>0:
+                conflict.append({"الشركة":ticker, "CALL $M":f"${c:.2f}", "PUT $M":f"${p_:.2f}", "الغالب": "CALL 🟢" if c>p_ else "PUT 🔴", "التفسير": "تحوط - الحوت يحمي نفسه"})
+        if conflict:
+            st.dataframe(pd.DataFrame(conflict), use_container_width=True)
+
+    elif p=="TOP10": st.markdown("### 🏆 اقوى 10"); st.markdown(build_html(final.head(10)), unsafe_allow_html=True)
+    elif p=="CALL": st.markdown(build_html(final[final["signal"].str.contains("CALL")].head(20)), unsafe_allow_html=True)
+    elif p=="PUT": st.markdown(build_html(final[final["signal"].str.contains("PUT")].head(20)), unsafe_allow_html=True)
+    else: st.markdown(build_html(final.head(50)), unsafe_allow_html=True)
+
+    st.markdown("<div style='background:#1e293b; padding:12px; border-radius:10px; margin-top:15px; color:#94a3b8; font-size:12px;'>💡 <b>ليش AMZN تظهر كول وبوت؟</b> هذا يسمى Hedging - الحوت يشتري CALL صاعد ويشتري PUT كتأمين. الفلتر الذكي يحلها ويظهر لك فقط الاتجاه اللي فيه فلوس أكثر.<br>شغل <b>🧠 فلتر ذكي</b> من اليسار = كل شركة مرة واحدة فقط.</div>", unsafe_allow_html=True)
+
+else:
+    st.warning("⏳ يفحص...")
+
 st.caption(f"Last {datetime.now().strftime('%H:%M:%S')} | V17 Smart Filter")def send_tg(msg):
     try:
         token=st.secrets.get("TELEGRAM_TOKEN","")
