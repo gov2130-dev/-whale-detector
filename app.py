@@ -1,308 +1,366 @@
-import streamlit as st, yfinance as yf, pandas as pd, math
+import streamlit as st, yfinance as yf, pandas as pd, math, time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(layout="wide", page_title="Whale V36.2 Syntax Fixed", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="Whale V37 SAFE BOT", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
 .stApp {background:#fff!important;}
-[data-testid="stSidebar"] {background:#f8f8f8!important; min-width:320px!important;}
-.whale-table {width:100%; border-collapse:collapse; font-size:12px;}
-.whale-table th {background:#111!important; color:#fff!important; padding:8px 4px; text-align:center; font-size:9px; white-space:nowrap;}
-.whale-table td {background:#fff!important; padding:9px 4px; text-align:center; border-bottom:1px solid #eee; font-weight:600; font-size:11px; white-space:nowrap;}
-.badge {background:#dcfce7; color:#14532d; border:1px solid #22c55e; padding:4px 8px; border-radius:10px; font-size:9px; font-weight:800;}
-.score {background:#166534; color:#fff; padding:5px 10px; border-radius:10px; font-weight:800; min-width:50px; display:inline-block;}
-.time-card {background:#111; color:#4ade80; border-radius:10px; padding:12px; font-family:monospace; text-align:center; font-size:12px; line-height:1.7; border:2px solid #22c55e;}
+.whale-table {width:100%; border-collapse:collapse; font-size:11px;}
+.whale-table th {background:#111!important; color:#fff!important; padding:7px 3px; text-align:center; font-size:8px;}
+.whale-table td {background:#fff!important; padding:8px 3px; text-align:center; border-bottom:1px solid #eee; font-weight:700; font-size:10px;}
+.badge-safe {background:#dcfce7; color:#14532d; border:2px solid #22c55e; padding:5px 10px; border-radius:12px; font-size:9px; font-weight:900;}
+.badge-risk {background:#fee2e2; color:#991b1b; border:1px solid #ef4444; padding:4px 8px; border-radius:10px; font-size:8px;}
+.badge-hedge {background:#fef9c3; color:#854d0e; border:1px solid #eab308; padding:4px 8px; border-radius:10px; font-size:8px;}
+.score {padding:5px 8px; border-radius:8px; font-weight:900; display:inline-block; min-width:45px;}
+.score-12 {background:#14532d; color:#fff;}
+.score-11 {background:#16a34a; color:#fff;}
+.score-10 {background:#22c55e; color:#000;}
+.time-card {background:#111; color:#4ade80; border-radius:10px; padding:10px; font-family:monospace; text-align:center; font-size:11px; border:2px solid #22c55e;}
+.bot-card {background:linear-gradient(135deg,#14532d,#16a34a); color:#fff; border-radius:12px; padding:12px; text-align:center; font-weight:800;}
 </style>
 """, unsafe_allow_html=True)
 
-def get_tickers():
-    return ["SPY","QQQ","TSLA","NVDA","AAPL","META","MSFT","AMD","COIN","MSTR","PLTR","SOFI","MARA","SMCI","AVGO","NFLX","AMZN","CRM"]
+if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
+if "last_ts" not in st.session_state: st.session_state.last_ts=datetime.now()
+if "view" not in st.session_state: st.session_state.view="✅ دخول آمن فقط"
+if "bot_active" not in st.session_state: st.session_state.bot_active=False
 
-if "results" not in st.session_state:
-    st.session_state.results = pd.DataFrame()
-if "last_ts" not in st.session_state:
-    st.session_state.last_ts = datetime.now()
-if "view" not in st.session_state:
-    st.session_state.view = "🏆 أفضل 10"
-
-def norm_cdf(x):
-    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-def greeks(S, K, T, iv):
+def norm_cdf(x): return 0.5*(1.0+math.erf(x/math.sqrt(2.0)))
+def greeks(S,K,T,iv):
     try:
-        if T <= 0: T = 0.05
-        if iv < 0.15 or iv > 3: iv = 0.55
-        d1 = (math.log(S / K) + 0.5 * iv * iv * T) / (iv * math.sqrt(T))
-        delta = norm_cdf(d1)
-        delta = max(0.20, min(0.80, delta))
-        return delta, iv
-    except:
-        return 0.55, 0.55
+        if T<=0: T=0.05
+        if iv<0.15 or iv>3: iv=0.55
+        d1=(math.log(S/K)+0.5*iv*iv*T)/(iv*math.sqrt(T))
+        delta=norm_cdf(d1)
+        return max(0.20,min(0.80,delta)), iv
+    except: return 0.55,0.55
 
-now = datetime.now()
-try:
-    delay = (now - st.session_state.last_ts).total_seconds()
-    if delay < 0 or delay > 3600:
-        delay = 0
-except:
-    delay = 0
+now=datetime.now()
+ksa_time=now+timedelta(hours=3)
+ksa_str=ksa_time.strftime('%H:%M:%S')
+delay=(now-st.session_state.last_ts).total_seconds()
+if delay<0 or delay>3600: delay=0
 
-ksa_time = now + timedelta(hours=3)
-ksa_str = ksa_time.strftime('%H:%M:%S')
-
-st.sidebar.title("🐋 V36.2 Syntax Fixed")
+# === البوت ===
+st.sidebar.title("🤖 بوت V37 الآمن")
 st.sidebar.markdown(f"""
 <div class="time-card">
-● LIVE {ksa_str} KSA<br>
-⏰ الآن {ksa_str}<br>
-⏳ تأخير: {delay:.0f} ث<br>
-🔄 آخر بحث: {st.session_state.last_ts.strftime('%H:%M:%S')}<br>
-✅ إصلاح قوس 256
+● {ksa_str} KSA<br>
+⏳ تأخير {delay:.0f}ث | {st.session_state.view}
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### 📌 الأقسام")
-views = ["🏆 أفضل 10", "💎 بدون خوف", "🌊 SPX", "🧭 NDX", "🔥 0DTE"]
+st.sidebar.markdown(f"""
+<div class="bot-card">
+🤖 البوت: {'🟢 شغال' if st.session_state.bot_active else '🔴 متوقف'}<br>
+يفحص كل 30 ثانية<br>
+دخول آمن فقط 11+/12
+</div>
+""", unsafe_allow_html=True)
+
+if st.sidebar.button("🤖 شغل البوت الآمن", type="primary", use_container_width=True):
+    st.session_state.bot_active=True
+    st.rerun()
+if st.sidebar.button("⏹️ وقف البوت", use_container_width=True):
+    st.session_state.bot_active=False
+    st.rerun()
+
+st.sidebar.markdown("### 📌 الفلترة الذكية")
+views=["✅ دخول آمن فقط","💎 بدون خوف 11+","🔥 انفجار سعري","↩️ نقطة انعكاس","⚠️ تحوط - تجنبه","🏆 كل الحيتان"]
 for v in views:
-    if st.sidebar.button(v, key=f"btn_{v}", use_container_width=True, type="primary" if st.session_state.view == v else "secondary"):
-        st.session_state.view = v
+    if st.sidebar.button(v, key=f"btn_{v}", use_container_width=True, type="primary" if st.session_state.view==v else "secondary"):
+        st.session_state.view=v
         st.rerun()
 
 st.sidebar.markdown("---")
-c1, c2 = st.sidebar.columns(2)
-with c1:
-    do_scan = st.button("⚡ بحث 15 ثانية", type="primary", use_container_width=True)
+c1,c2=st.sidebar.columns(2)
+with c1: do_scan=st.button("⚡ فحص آمن 15ث", type="primary", use_container_width=True)
 with c2:
     if st.button("🧹 تصفير", use_container_width=True):
-        st.session_state.results = pd.DataFrame()
-        st.session_state.last_ts = datetime.now()
+        st.session_state.results=pd.DataFrame()
+        st.session_state.last_ts=datetime.now()
         st.rerun()
 
-min_prem = st.sidebar.slider("💰 M$", 0.05, 5.0, 0.2, 0.05)
-min_vol = st.sidebar.slider("VOL", 50, 5000, 100, 50)
+min_prem=st.sidebar.slider("💰 M$",0.05,5.0,0.3,0.05)
+min_vol=st.sidebar.slider("VOL",50,5000,150,50)
 
-@st.cache_data(ttl=60)
-def analysis(ticker):
+@st.cache_data(ttl=45)
+def analysis_safe(ticker):
     try:
-        real = "SPY" if ticker == "SPX" else "QQQ" if ticker == "NDX" else ticker
-        h = yf.Ticker(real).history(period="3mo")
-        if len(h) < 30:
-            return None
-        curr = float(h['Close'].iloc[-1])
-        if curr < 1 or curr > 10000:
-            return None
-        ema9 = float(h['Close'].ewm(span=9, adjust=False).mean().iloc[-1])
-        ema21 = float(h['Close'].ewm(span=21, adjust=False).mean().iloc[-1])
-        h15 = h.tail(15)
-        vwap = float((h15['Close'] * h15['Volume']).sum() / h15['Volume'].sum()) if h15['Volume'].sum() > 0 else curr
-        delta = h['Close'].diff()
-        gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-        rs = gain.iloc[-1] / (loss.iloc[-1] if loss.iloc[-1] != 0 else 0.01)
-        rsi = 100 - (100 / (1 + rs)) if not pd.isna(rs) else 50
-        high = float(h['High'].tail(20).max())
-        low = float(h['Low'].tail(20).min())
-        pos = (curr - low) / (high - low) * 100 if high != low else 50
-        vol_ratio = float(h['Volume'].iloc[-1] / h['Volume'].tail(20).mean()) if h['Volume'].tail(20).mean() > 0 else 1
-        return {"price": curr, "ema9": ema9, "ema21": ema21, "vwap": vwap, "rsi": float(rsi), "pos": pos, "vol_ratio": vol_ratio}
-    except:
-        return None
+        real="SPY" if ticker=="SPX" else "QQQ" if ticker=="NDX" else ticker
+        tk=yf.Ticker(real)
+        h=tk.history(period="6mo")
+        if len(h)<60: return None
+        curr=float(h['Close'].iloc[-1])
+        if curr<1 or curr>10000: return None
+        # مؤشرات قوية
+        ema9=float(h['Close'].ewm(9).mean().iloc[-1])
+        ema21=float(h['Close'].ewm(21).mean().iloc[-1])
+        ema50=float(h['Close'].ewm(50).mean().iloc[-1])
+        h15=h.tail(20)
+        vwap=float((h15['Close']*h15['Volume']).sum()/h15['Volume'].sum()) if h15['Volume'].sum()>0 else curr
+        # RSI حقيقي + انعكاس
+        delta=h['Close'].diff()
+        gain=delta.where(delta>0,0).ewm(alpha=1/14).mean()
+        loss=(-delta.where(delta<0,0)).ewm(alpha=1/14).mean()
+        rs=gain.iloc[-1]/(loss.iloc[-1] if loss.iloc[-1]!=0 else 0.01)
+        rsi=100-(100/(1+rs)) if not pd.isna(rs) else 50
+        rsi_prev=float(100-(100/(1+(gain.iloc[-5]/(loss.iloc[-5] if loss.iloc[-5]!=0 else 0.01))))) if len(gain)>5 else 50)
+        # انفجار
+        high20=float(h['High'].tail(20).max())
+        low20=float(h['Low'].tail(20).min())
+        vol_avg=float(h['Volume'].tail(20).mean())
+        vol_today=float(h['Volume'].iloc[-1])
+        vol_ratio=vol_today/vol_avg if vol_avg>0 else 1
+        # شمعة عاكسة
+        last=h.iloc[-1]; prev=h.iloc[-2]
+        bullish_engulf = last['Close']>last['Open'] and prev['Close']<prev['Open'] and last['Close']>prev['Open'] and last['Open']<prev['Close']
+        near_support = curr <= low20*1.03
 
-def fetch(ticker, min_prem, min_vol):
+        pos=(curr-low20)/(high20-low20)*100 if high20!=low20 else 50
+        is_breakout = curr >= high20*0.99 and vol_ratio>=1.5 and curr>ema9>ema21
+        is_reversal = (rsi<38 and rsi>rsi_prev) or (near_support and bullish_engulf) or (curr>vwap and prev['Close']<h['Close'].ewm(9).mean().iloc[-2])
+
+        return {
+            "price":curr,"ema9":ema9,"ema21":ema21,"ema50":ema50,"vwap":vwap,"rsi":float(rsi),"rsi_prev":rsi_prev,
+            "high20":high20,"low20":low20,"vol_ratio":vol_ratio,"pos":pos,
+            "is_breakout":is_breakout,"is_reversal":is_reversal,"bullish_engulf":bullish_engulf,"near_support":near_support
+        }
+    except: return None
+
+def fetch_safe(ticker, min_prem, min_vol):
     try:
-        real = "SPY" if ticker == "SPX" else "QQQ" if ticker == "NDX" else ticker
-        tk = yf.Ticker(real)
-        if not tk.options:
-            return []
-        st_data = analysis(ticker)
-        if not st_data:
-            return []
-        curr = st_data["price"]
-        rows = []
+        real="SPY" if ticker=="SPX" else "QQQ" if ticker=="NDX" else ticker
+        tk=yf.Ticker(real)
+        if not tk.options: return []
+        st_data=analysis_safe(ticker)
+        if not st_data: return []
+        curr=st_data["price"]
+        rows=[]
         for exp in tk.options[:3]:
             try:
-                exp_d = datetime.strptime(exp, "%Y-%m-%d")
-                days = (exp_d - datetime.now()).days
-                T = max(days / 365, 0.05) if days > 0 else 0.02
-                calls = tk.option_chain(exp).calls
-                if calls.empty:
-                    continue
-                calls = calls.copy()
-                if 'volume' not in calls.columns or 'lastPrice' not in calls.columns:
-                    continue
-                calls = calls[calls['volume'] > 0]
-                calls['prem'] = calls['lastPrice'] * calls['volume'] * 100
-                calls = calls[calls['prem'] >= min_prem * 1e6]
-                calls = calls[calls['volume'] >= min_vol]
-                if calls.empty:
-                    continue
-                calls = calls.sort_values('prem', ascending=False).head(3)
-                for _, r in calls.iterrows():
+                exp_d=datetime.strptime(exp,"%Y-%m-%d")
+                days=(exp_d-datetime.now()).days
+                T=max(days/365,0.05) if days>0 else 0.02
+                chain=tk.option_chain(exp)
+                calls=chain.calls
+                if calls.empty: continue
+                calls=calls.copy()
+                if 'volume' not in calls.columns or 'lastPrice' not in calls.columns or 'openInterest' not in calls.columns: continue
+                calls=calls[calls['volume']>0]
+                calls['prem']=calls['lastPrice']*calls['volume']*100
+                calls=calls[calls['prem']>=min_prem*1e6]
+                calls=calls[calls['volume']>=min_vol]
+                if calls.empty: continue
+                calls=calls.sort_values('prem',ascending=False).head(4)
+                for _,r in calls.iterrows():
                     try:
-                        strike = float(r['strike'])
-                        if ticker == "SPY" and strike > 800:
-                            continue
-                        dist = (strike - curr) / curr * 100 if curr > 0 else 0
-                        iv = float(r.get('impliedVolatility', 0.55))
-                        if pd.isna(iv) or iv < 0.1 or iv > 3:
-                            iv = 0.55
-                        delta, fiv = greeks(curr, strike, T, iv)
-                        prem_M = float(r['lastPrice'] * float(r['volume']) * 100 / 1e6)
-                        opt_price = float(r['lastPrice'])
-                        vol = int(r['volume'])
-                        if prem_M == 0 or opt_price == 0 or vol == 0:
-                            continue
+                        strike=float(r['strike'])
+                        if ticker=="SPY" and strike>800: continue
+                        dist=(strike-curr)/curr*100
+                        # فلتر دخول آمن - لا بعيد ولا قريب جدا
+                        if abs(dist)>5: continue
+                        if abs(dist)<0.1: continue # ITM عميق = تحوط غالبا
+                        iv=float(r.get('impliedVolatility',0.55))
+                        if pd.isna(iv) or iv<0.15 or iv>3: iv=0.55
+                        delta,fiv=greeks(curr,strike,T,iv)
+                        # دخول آمن: دلتا 0.30-0.65 فقط
+                        if delta<0.28 or delta>0.70: continue
+
+                        prem_M=float(r['lastPrice']*float(r['volume'])*100/1e6)
+                        opt_price=float(r['lastPrice'])
+                        vol=int(r['volume'])
+                        oi=int(r.get('openInterest',0))
+                        bid=float(r.get('bid',0)); ask=float(r.get('ask',0))
+                        spread = (ask-bid)/opt_price*100 if opt_price>0 and bid>0 else 99
+
+                        # كشف التحوط vs شراء حقيقي
+                        is_hedge=False
+                        hedge_reason=""
+                        if oi>0 and vol/oi<0.15 and days>10:
+                            is_hedge=True; hedge_reason="OI ضخم VOL قليل = تحوط"
+                        if spread>15:
+                            is_hedge=True; hedge_reason=f"سبريد {spread:.0f}% واسع = وهمي"
+                        if opt_price<0.3:
+                            is_hedge=True; hedge_reason="سعر عقد رخيص جدا"
+
+                        # تأكيد شراء حقيقي
+                        is_real_buy = vol>oi*0.3 and spread<8 and opt_price>=0.8 and 0.30<=delta<=0.65
+
+                        if prem_M==0 or opt_price==0: continue
                         rows.append({
-                            "ticker": ticker,
-                            "stock_now": float(curr),
-                            "strike": int(strike),
-                            "dist": float(dist),
-                            "opt_price": float(opt_price),
-                            "vol": int(vol),
-                            "prem_M": float(prem_M),
-                            "prem_val": float(r['lastPrice'] * float(r['volume']) * 100),
-                            "exp_short": exp_d.strftime("%m/%d"),
-                            "exp_full": exp_d.strftime("%Y-%m-%d"),
-                            "days": int(days),
-                            "delta": float(delta),
-                            "rsi": float(st_data["rsi"])
+                            "ticker":ticker,"stock_now":float(curr),"strike":int(strike),"dist":float(dist),
+                            "opt_price":float(opt_price),"vol":int(vol),"oi":int(oi),"prem_M":float(prem_M),
+                            "prem_val":float(r['lastPrice']*float(r['volume'])*100),
+                            "exp_short":exp_d.strftime("%m/%d"),"exp_full":exp_d.strftime("%Y-%m-%d"),
+                            "days":int(days),"delta":float(delta),"iv":float(fiv),"rsi":float(st_data["rsi"]),
+                            "is_hedge":is_hedge,"hedge_reason":hedge_reason,"is_real_buy":is_real_buy,
+                            "spread":float(spread),"vol_ratio":float(st_data["vol_ratio"]),
+                            "is_breakout":bool(st_data["is_breakout"]),"is_reversal":bool(st_data["is_reversal"]),
+                            "bid":float(bid),"ask":float(ask)
                         })
-                    except:
-                        continue
-                if len(rows) >= 2:
-                    break
-            except:
-                continue
+                    except: continue
+                if len(rows)>=3: break
+            except: continue
         return rows
-    except:
-        return []
+    except: return []
 
-def calc_score(row, st_data):
-    if not st_data:
-        return 10
+def calc_safe_score(row, st_data):
+    if not st_data: return 8, "لا بيانات"
+    ok=0; reasons=[]
     try:
-        ok = 0
-        if st_data["price"] > st_data["ema9"] > st_data["ema21"]:
-            ok += 1
-        if 35 <= st_data["rsi"] <= 75:
-            ok += 1
-        if st_data["vol_ratio"] >= 0.6:
-            ok += 1
-        if abs(row["dist"]) <= 3:
-            ok += 1
-        if 0.2 <= row["delta"] <= 0.8:
-            ok += 1
-        ok += 5
-        if 15 <= st_data["pos"] <= 85:
-            ok += 1
-        ok += 1
-        return ok
+        if st_data["price"]>st_data["ema9"]>st_data["ema21"]:
+            ok+=1; reasons.append("EMA9>21")
+        else:
+            reasons.append("EMA ضعيف")
+        if 40<=st_data["rsi"]<=68:
+            ok+=1; reasons.append(f"RSI {st_data['rsi']:.0f} مثالي")
+        elif st_data["rsi"]<35:
+            ok+=1; reasons.append(f"RSI {st_data['rsi']:.0f} انعكاس")
+        if st_data["vol_ratio"]>=1.5:
+            ok+=2; reasons.append(f"VOL x{st_data['vol_ratio']:.1f} انفجار")
+        elif st_data["vol_ratio"]>=1.0:
+            ok+=1; reasons.append("VOL جيد")
+        if abs(row["dist"])<=1.5:
+            ok+=2; reasons.append("قريب ATM آمن")
+        elif abs(row["dist"])<=3:
+            ok+=1; reasons.append("مسافة مقبولة")
+        if 0.35<=row["delta"]<=0.60:
+            ok+=2; reasons.append(f"Δ {row['delta']:.2f} دخول آمن")
+        elif 0.30<=row["delta"]<=0.65:
+            ok+=1
+        if row["is_real_buy"]:
+            ok+=2; reasons.append("شراء حقيقي")
+        if row["spread"]<5:
+            ok+=1; reasons.append(f"سبريد {row['spread']:.0f}% ضيق")
+        if st_data["is_breakout"]:
+            ok+=2; reasons.append("🔥 انفجار اختراق High20")
+        if st_data["is_reversal"]:
+            ok+=2; reasons.append("↩️ انعكاس دعم + شمعة")
+        if row["is_hedge"]:
+            ok-=3; reasons.append(f"⚠️ {row['hedge_reason']}")
+        if row["days"]==0:
+            reasons.append("0DTE خطر")
+            ok-=1
+        ok=max(0,min(12,ok))
+        return ok, " | ".join(reasons[:4])
     except:
-        return 10
+        return 8, "خطأ"
 
-st.title(f"{st.session_state.view} - Whale V36.2 {ksa_str}")
-st.caption(f"الشركة قبل السعر | سعر العقد + الحوت موجود | {ksa_str} KSA")
+st.title(f"{st.session_state.view} - BOT الآمن {ksa_str}")
+st.caption(f"دخول آمن 11+/12 = شراء حقيقي + انفجار + انعكاس - بدون تحوط")
 
 if st.session_state.results.empty:
-    st.warning("⏳ اضغط ⚡ بحث 15 ثانية")
-    final = pd.DataFrame()
+    st.info("⏳ اضغط ⚡ فحص آمن 15ث - يفلتر التحوط تلقائيا")
+    final=pd.DataFrame()
 else:
-    enriched = []
-    for _, r in st.session_state.results.iterrows():
+    enriched=[]
+    for _,r in st.session_state.results.iterrows():
         try:
-            st_data = analysis(r["ticker"])
-            ok = calc_score(r, st_data)
-            r2 = dict(r)
-            r2["ok"] = int(ok)
-            if r2.get("prem_M", 0) == 0:
-                r2["prem_M"] = r2.get("prem_val", 0) / 1e6
+            st_data=analysis_safe(r["ticker"])
+            ok,reason=calc_safe_score(r, st_data)
+            r2=dict(r); r2["ok"]=int(ok); r2["reason"]=reason
+            if r2.get("prem_M",0)==0: r2["prem_M"]=r2.get("prem_val",0)/1e6
             enriched.append(r2)
-        except:
-            continue
+        except: continue
 
     if not enriched:
-        final = pd.DataFrame()
+        final=pd.DataFrame()
     else:
-        df = pd.DataFrame(enriched)
-        if "ok" not in df.columns:
-            df["ok"] = 10
-        if "prem_M" not in df.columns:
-            df["prem_M"] = 0.5
-        df = df.sort_values(["ok", "prem_M"], ascending=[False, False])
-
-        v = st.session_state.view
-        if v == "🌊 SPX":
-            final = df[df["ticker"].isin(["SPY", "SPX"])].head(20)
-        elif v == "🧭 NDX":
-            final = df[df["ticker"].isin(["QQQ", "NDX"])].head(20)
-        elif v == "🔥 0DTE":
-            if "days" in df.columns:
-                has_zero = (df["days"] == 0).any()
-                if has_zero:
-                    final = df[df["days"] == 0].head(20)
-                else:
-                    final = df[df["days"] <= 1].head(20)
-            else:
-                final = df.head(10)
-        elif v == "💎 بدون خوف":
-            final = df[df["ok"] >= 10].head(20)
+        df=pd.DataFrame(enriched)
+        df=df.sort_values(["ok","prem_M"], ascending=[False][False])
+        v=st.session_state.view
+        if v=="✅ دخول آمن فقط":
+            final=df[(df["ok"]>=11) & (df["is_hedge"]==False) & (df["is_real_buy"]==True)].head(15)
+        elif v=="💎 بدون خوف 11+":
+            final=df[df["ok"]>=11].head(20)
+        elif v=="🔥 انفجار سعري":
+            final=df[df["is_breakout"]==True].head(20)
+            if final.empty: final=df.sort_values("vol_ratio", ascending=False).head(15)
+        elif v=="↩️ نقطة انعكاس":
+            final=df[df["is_reversal"]==True].head(20)
+        elif v=="⚠️ تحوط - تجنبه":
+            final=df[df["is_hedge"]==True].head(20)
         else:
-            final = df.head(10)
+            final=df.head(15)
 
     if not final.empty:
-        st.success(f"✅ {len(final)} عقد | {ksa_str} KSA | تأخير {delay:.0f}ث")
-        html = '<table class="whale-table"><tr><th>💎</th><th>الشركة</th><th>سعر السهم</th><th>النوع</th><th>سترايك</th><th>مسافة</th><th>📅</th><th>سعر العقد</th><th>الحوت</th></tr>'
-        for _, w in final.iterrows():
-            try:
-                sp = float(w.get("stock_now", 0))
-                if sp < 1:
-                    sp = 580.0 if w.get("ticker") == "SPY" else 100.0
-                if w.get("ticker") == "SPY" and sp > 700:
-                    sp = 580.0
-                dist = float(w.get("dist", 0))
-                prem = float(w.get("prem_M", 0))
-                if prem == 0:
-                    prem = float(w.get("prem_val", 0)) / 1e6
-                opt_p = float(w.get("opt_price", 0))
-                dlt = float(w.get("delta", 0.55))
-                rsi = float(w.get("rsi", 50))
-                vol = int(w.get("vol", 0))
-                html += f'<tr><td><span class="score">{int(w.get("ok", 10))}/12</span></td><td><b>{w.get("ticker", "")}</b></td><td><span style="color:#15803d;font-weight:800">${sp:.2f}</span><br><span style="font-size:9px;color:#888">RSI {rsi:.0f}</span></td><td><span class="badge">CALL BUY</span></td><td><b>{int(w.get("strike", 0))}</b></td><td>{dist:+.2f}%</td><td>{w.get("exp_short", "")} ({w.get("days", 0)}ي)</td><td><b>${opt_p:.2f}</b><br><span style="font-size:9px">Δ {dlt:.2f}</span></td><td><b>${prem:.1f}M</b><br><span style="font-size:9px">{vol/1000:.1f}K</span></td></tr>'
-            except:
-                continue
-        html += '</table>'
-        st.markdown(html, unsafe_allow_html=True)
-    else:
-        st.warning("لا يوجد")
+        st.success(f"✅ {len(final)} عقد آمن | {ksa_str} | البوت {'🟢' if st.session_state.bot_active else '🔴'}")
+        # إشارات الدخول
+        for _,w in final.head(3).iterrows():
+            if w.get("ok",0)>=11 and not w.get("is_hedge",False):
+                st.markdown(f"""
+                <div style="background:#dcfce7;border:2px solid #22c55e;border-radius:12px;padding:10px;margin:5px 0;">
+                ✅ <b>دخول آمن: {w.get('ticker')} {int(w.get('strike'))} CALL</b> | {w.get('reason')}<br>
+                💰 سعر السهم ${w.get('stock_now',0):.2f} → سترايك {int(w.get('strike'))} ({w.get('dist',0):+.2f}%) | العقد ${w.get('opt_price',0):.2f} Δ{w.get('delta',0):.2f}<br>
+                🎯 هدف: +40-80% | وقف: -25% | {w.get('exp_short')} ({w.get('days')}ي)
+                </div>
+                """, unsafe_allow_html=True)
 
-if do_scan:
-    tickers = get_tickers()
-    with st.spinner(f"⚡ بحث {len(tickers)} سهم..."):
-        rows = []
+        html='<table class="whale-table"><tr><th>💎</th><th>الشركة</th><th>سعر السهم</th><th>سترايك</th><th>مسافة</th><th>📅</th><th>سعر العقد</th><th>الحوت</th><th>آمن؟</th></tr>'
+        for _,w in final.iterrows():
+            try:
+                sp=float(w.get("stock_now",0))
+                if sp<1: sp=100
+                if w.get("ticker")=="SPY" and sp>700: sp=580
+                dist=float(w.get("dist",0)); prem=float(w.get("prem_M",0)); opt_p=float(w.get("opt_price",0))
+                dlt=float(w.get("delta",0.55)); vol=int(w.get("vol",0)); oi=int(w.get("oi",0))
+                ok=int(w.get("ok",0))
+                if ok>=11: css="score score-12"
+                elif ok>=10: css="score score-11"
+                else: css="score score-10"
+                if w.get("is_hedge",False):
+                    safe_badge=f'<span class="badge-hedge">⚠️ تحوط</span><br><span style="font-size:7px">{w.get("hedge_reason","")[:15]}</span>'
+                elif w.get("is_real_buy",False) and ok>=11:
+                    safe_badge='<span class="badge-safe">✅ آمن</span><br><span style="font-size:7px">شراء حقيقي</span>'
+                else:
+                    safe_badge='<span class="badge-risk">متوسط</span>'
+                html+=f'<tr><td><span class="{css}">{ok}/12</span></td><td><b>{w.get("ticker","")}</b><br><span style="font-size:7px;color:#888">{w.get("reason","")[:20]}</span></td><td><span style="color:#15803d;font-weight:800">${sp:.2f}</span><br><span style="font-size:8px">RSI {float(w.get("rsi",50)):.0f} VOLx{float(w.get("vol_ratio",1)):.1f}</span></td><td><b>{int(w.get("strike",0))}</b></td><td>{dist:+.2f}%<br><span style="font-size:7px">Δ{dlt:.2f}</span></td><td>{w.get("exp_short","")} ({w.get("days",0)}ي)</td><td><b>${opt_p:.2f}</b><br><span style="font-size:7px">{vol/1000:.1f}K/{oi/1000:.0f}K</span></td><td><b>${prem:.1f}M</b><br><span style="font-size:7px">S{float(w.get("spread",0)):.0f}%</span></td><td>{safe_badge}</td></tr>'
+            except: continue
+        html+='</table>'
+        st.markdown(html, unsafe_allow_html=True)
+
+        if st.session_state.view=="⚠️ تحوط - تجنبه":
+            st.error("⛔ هذه عقود تحوط - OI ضخم + VOL قليل + سبريد واسع - لا تدخل")
+    else:
+        if st.session_state.view=="✅ دخول آمن فقط":
+            st.warning("لا يوجد دخول آمن 11+/12 الآن - السوق هادي - انتظر انفجار أو جرب بدون خوف")
+            if 'df' in locals() and not df.empty:
+                st.write("أقرب فرصة:")
+                st.dataframe(df.head(3)[["ticker","strike","stock_now","dist","ok","reason"]])
+        else:
+            st.warning(f"لا يوجد في {st.session_state.view}")
+
+if do_scan or (st.session_state.bot_active and delay>30):
+    tickers=["SPY","QQQ","TSLA","NVDA","AAPL","META","MSFT","AMD","COIN","MSTR","PLTR","SOFI","MARA","SMCI","AVGO","NFLX","AMZN","CRM","HOOD"]
+    with st.spinner(f"🤖 البوت يفحص {len(tickers)} سهم - دخول آمن..."):
+        rows=[]
         with ThreadPoolExecutor(max_workers=15) as executor:
-            futs = {executor.submit(fetch, t, min_prem, min_vol): t for t in tickers}
+            futs={executor.submit(fetch_safe, t, min_prem, min_vol): t for t in tickers}
             for fu in as_completed(futs):
                 try:
-                    res = fu.result()
-                    if res:
-                        rows.extend(res)
-                except:
-                    pass
+                    res=fu.result()
+                    if res: rows.extend(res)
+                except: pass
     if rows:
-        ndf = pd.DataFrame(rows)
-        ndf = ndf[(ndf["stock_now"] > 1) & (ndf["prem_M"] > 0) & (ndf["opt_price"] > 0)]
-        ndf = ndf[~((ndf["ticker"] == "SPY") & (ndf["stock_now"] > 700))]
+        ndf=pd.DataFrame(rows)
+        ndf=ndf[(ndf["stock_now"]>1)&(ndf["prem_M"]>0)&(ndf["opt_price"]>0)]
+        ndf=ndf[~((ndf["ticker"]=="SPY") & (ndf["stock_now"]>700))]
         if not ndf.empty:
-            if not st.session_state.results.empty:
-                combined = pd.concat([st.session_state.results, ndf])
-                combined = combined.sort_values("prem_M", ascending=False)
-                combined = combined.drop_duplicates(["ticker", "strike", "exp_full"]).head(800)
+            combined=pd.concat([st.session_state.results, ndf]).sort_values("prem_M",ascending=False).drop_duplicates(["ticker","strike","exp_full"]).head(1000) if not st.session_state.results.empty else ndf
+            st.session_state.results=combined
+            st.session_state.last_ts=datetime.now()
+            if st.session_state.bot_active:
+                time.sleep(1)
+                st.rerun()
             else:
-                combined = ndf
-            st.session_state.results = combined
-            st.session_state.last_ts = datetime.now()
-            st.rerun()
+                st.rerun()
 
-st.caption(f"V36.2 | {ksa_str} KSA | إصلاح SyntaxError 256 - القوس تسكر")
+# بوت تلقائي
+if st.session_state.bot_active:
+    st.markdown(f"<script>setTimeout(function(){{window.location.reload();}}, 30000);</script>", unsafe_allow_html=True)
+    st.info(f"🤖 البوت شغال - يفحص كل 30 ثانية - {ksa_str} - اضغط وقف البوت للإيقاف")
+
+st.caption(f"V37 SAFE BOT | {ksa_str} KSA | دخول آمن = شراء حقيقي + انفجار + بدون تحوط")
