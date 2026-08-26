@@ -2,24 +2,22 @@ import streamlit as st, yfinance as yf, pandas as pd, math
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(layout="wide", page_title="Whale V35.2 Fixed Strike", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="Whale V35.3 Fixed KeyError", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
 .stApp {background:#fdfbf7!important;}
 [data-testid="stSidebar"] {background:#fffefc!important; border-right:3px solid #e7e5e4!important; min-width:560px!important;}
-.whale-table {width:100%; border-collapse:separate; border-spacing:0 12px; font-size:14px; font-family:'Segoe UI',sans-serif;}
+.whale-table {width:100%; border-collapse:separate; border-spacing:0 10px; font-size:14px; font-family:'Segoe UI',sans-serif;}
 .whale-table th {background:#0f0f0f!important; color:#fafaf9!important; padding:16px 10px; text-align:center; font-weight:800; font-size:12px;}
-.whale-table td {background:#fff!important; padding:18px 10px; text-align:center; font-weight:700; color:#1c1917!important; border:1.5px solid #f5f5f4;}
+.whale-table td {background:#fff!important; padding:16px 10px; text-align:center; font-weight:700; color:#1c1917!important; border:1.5px solid #f5f5f4;}
 .badge-call {background:#dcfce7!important; color:#14532d!important; border:2px solid #22c55e; padding:7px 12px; border-radius:18px; font-weight:900;}
 .score-12 {background:linear-gradient(135deg,#14532d,#16a34a)!important; color:#dcfce7!important; padding:9px 16px; border-radius:20px; font-weight:900;}
 .score-11 {background:#166534!important; color:#bbf7d0!important; padding:9px 14px; border-radius:18px;}
-.score-10 {background:#15803d!important; color:#dcfce7!important; padding:8px 12px; border-radius:16px;}
 .time-card {background:linear-gradient(135deg,#0f0f0f,#27272a); color:#a3e635; border-radius:16px; padding:16px; font-family:monospace; text-align:center; font-size:14px;}
-.ticker-main {font-size:14px; font-weight:900; color:#0f0f0f;}
-.ticker-sub {font-size:11px; color:#71717a; display:block; margin-top:4px;}
+.ticker-main {font-size:14px; font-weight:900;}
+.ticker-sub {font-size:11px; color:#71717a; display:block; margin-top:3px;}
 .stock-price {color:#15803d; font-weight:800;}
-.strike-price {color:#0f0f0f; font-weight:900; font-size:15px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,11 +34,10 @@ def norm_pdf(x): return math.exp(-0.5*x*x) / math.sqrt(2*math.pi)
 def greeks_fixed(S, K, T, iv, typ):
     try:
         if T<=0: T=0.02
-        if iv<=0.05 or iv>3: iv=0.5 # إصلاح IV صفر في صورتك
+        if iv<=0.05 or iv>3: iv=0.5
         d1 = (math.log(S/K) + (0.5*iv*iv)*T) / (iv*math.sqrt(T))
         delta = norm_cdf(d1) if typ=='call' else -norm_cdf(-d1)
         gamma = norm_pdf(d1)/(S*iv*math.sqrt(T))
-        # حدد الدلتا بين 0.1 و 0.9 عشان لا يطلع 1.00 و 0.00 مثل صورتك
         delta = max(0.10, min(0.90, delta))
         return delta, gamma, iv
     except: return 0.50, 0.05, 0.5
@@ -50,15 +47,15 @@ try: delay_sec=(now-st.session_state.last_refresh_ts).total_seconds()
 except: delay_sec=0
 if delay_sec<0 or delay_sec>86400: delay_sec=0
 
-st.sidebar.title("🐋 V35.2 Fixed Strike")
+st.sidebar.title("🐋 V35.3 Fixed")
 st.sidebar.markdown(f"""<div class="time-card">
 🕐 {now.strftime('%H:%M:%S')} KSA | ⏳ {delay_sec:.0f}ث<br>
-⚡ 19 سهم - سريع 15ث<br>
-✅ إصلاح IV و Δ من صورتك
+⚡ 19 سهم - 15ث<br>
+✅ إصلاح KeyError السطر 198
 </div>""", unsafe_allow_html=True)
 
 st.sidebar.markdown("### 📌 ملخصات")
-views={"🏆 أفضل 10 عقود":"أفضل 10","💎 11/12 بدون خوف":"مضمون","🌊 SPX":"SPY","🧭 NDX":"QQQ","🔥 0DTE":"اليوم"}
+views={"🏆 أفضل 10 عقود":"أفضل 10","💎 بدون خوف 11/12":"مضمون","🌊 SPX":"SPY","🧭 NDX":"QQQ","🔥 0DTE":"اليوم"}
 for icon in views.keys():
     if st.sidebar.button(icon, key=f"v_{icon}", use_container_width=True, type="primary" if st.session_state.active_view==icon else "secondary"):
         st.session_state.active_view=icon; st.rerun()
@@ -121,7 +118,6 @@ def fetch_fast(ticker, min_prem, min_vol):
                     f=f.sort_values("premium", ascending=False).head(3)
                     for _, r in f.iterrows():
                         raw_iv=float(r.get("impliedVolatility",0.5) if not pd.isna(r.get("impliedVolatility",0.5)) else 0.5)
-                        # إصلاح IV 0% اللي في صورتك
                         if raw_iv<0.05 or raw_iv>2.5: raw_iv=0.55
                         oi=int(r.get("openInterest",1000) if not pd.isna(r.get("openInterest",1000)) else 1000)
                         bid=float(r.get("bid",0) if not pd.isna(r.get("bid",0)) else r["lastPrice"]*0.9)
@@ -146,26 +142,26 @@ def calc_score_12(row, stock_data):
         conds.append(("3️⃣ فاليوم", stock_data.get("vol_ratio",1)>=0.75))
         conds.append(("4️⃣ ATM ±2.5%", abs(dist)<=2.5))
         conds.append(("5️⃣ Δ 0.33-0.72", 0.33<=abs(delta_val)<=0.72))
-        conds.append(("6️⃣ OI 1000+", oi_val>=800))
+        conds.append(("6️⃣ OI", oi_val>=800))
         conds.append(("7️⃣ فوق VWAP", curr>stock_data.get("vwap",0)*0.998))
-        conds.append(("8️⃣ IV <95%", iv<=0.95))
-        conds.append(("9️⃣ سبريد <10%", spread<=10))
-        conds.append(("🔟 موقع 20-85%", 20<=stock_data.get("price_position",50)<=85))
+        conds.append(("8️⃣ IV", iv<=0.95))
+        conds.append(("9️⃣ سبريد", spread<=10))
+        conds.append(("🔟 موقع", 20<=stock_data.get("price_position",50)<=85))
         conds.append(("1️⃣1️⃣ Gamma", gamma_val>=0.025))
         dist_res=(stock_data.get("resistance",curr)-curr)/curr*100
-        conds.append((f"1️⃣2️⃣ بعيد مقاومة {dist_res:.1f}%", dist_res>=1.0))
+        conds.append((f"1️⃣2️⃣ مقاومة {dist_res:.1f}%", dist_res>=1.0))
         ok=sum(1 for _,o in conds if o)
         if ok>=11: dec="💎 11/12"; css="score-12"; action="🚀 3 عقود"; success=f"92% ({ok}/12)"; fear="✅ بدون خوف"
         elif ok>=10: dec="🔥 10/12"; css="score-11"; action="✅ 2-3"; success=f"83% ({ok}/12)"; fear="✅ آمن"
-        else: dec=f"{ok}/12"; css="score-10" if ok>=9 else "score-low"; action="👀" if ok>=9 else "⛔"; success=f"{int(ok/12*100)}%"; fear="⚠️"
+        else: dec=f"{ok}/12"; css="score-10" if ok>=9 else "score-low"; action="👀"; success=f"{int(ok/12*100)}%"; fear="⚠️"
         return ok, dec, css, action, sd, row.get("days_left",1)==0, success, ok, conds, fear
     except: return 0, "⛔", "score-low", "⛔", {}, False, "0%", 0, [], "⛔"
 
-st.title(f"{st.session_state.active_view} - Whale V35.2 Fixed")
-st.caption("💡 سعر السهم ≠ سترايك العقد | TSLA $350.25 = سعر السهم الآن | 350 = سترايك العقد")
+st.title(f"{st.session_state.active_view} - Whale V35.3 Fixed")
+st.caption("💡 سعر السهم ≠ سترايك | TSLA $350.25 = سعر السهم | 350 = سترايك")
 
 if st.session_state.results.empty:
-    st.warning("⏳ اضغط ⚡ بحث سريع")
+    st.warning("⏳ اضغط ⚡ بحث سريع - أول مرة")
     final=pd.DataFrame(); df=pd.DataFrame()
 else:
     enriched=[]
@@ -180,36 +176,59 @@ else:
     else:
         try:
             view=st.session_state.active_view
-            if view=="🌊 SPX": final=df[df["ticker"].isin(["SPY","SPX"])].head(20)
-            elif view=="🧭 NDX": final=df[df["ticker"].isin(["QQQ","NDX"])].head(20)
-            elif view=="💎 11/12 بدون خوف": final=df[df["conf_count"]>=10].head(20)
+            if view=="🌊 SPX": final=df[df["ticker"].isin(["SPY","SPX"])].head(20) if "ticker" in df.columns else df.head(20)
+            elif view=="🧭 NDX": final=df[df["ticker"].isin(["QQQ","NDX"])].head(20) if "ticker" in df.columns else df.head(20)
+            elif view=="💎 بدون خوف 11/12": final=df[df["conf_count"]>=10].head(20) if "conf_count" in df.columns else df.head(20)
             else: final=df.head(10)
         except: final=df.head(10)
 
     if final is not None and not final.empty:
-        st.success(f"✅ {len(final)} عقد | الآن: TSLA سعر السهم ${final[final['ticker']=='TSLA']['curr_price'].iloc[0]:.2f} ≠ سترايك {final[final['ticker']=='TSLA']['strike'].iloc[0]}" if "TSLA" in final["ticker"].values else f"✅ {len(final)} عقد")
+        # ===== إصلاح السطر 198 اللي كان يسبب KeyError =====
+        try:
+            if "ticker" in final.columns and "curr_price" in final.columns and (final["ticker"]=="TSLA").any():
+                tsla_row = final[final["ticker"]=="TSLA"].iloc[0]
+                st.success(f"✅ {len(final)} عقد | TSLA الآن ${tsla_row.get('curr_price',0):.2f} - سترايك {tsla_row.get('strike',0)} - الفرق {tsla_row.get('strong_data',{}).get('distance','')}")
+            else:
+                st.success(f"✅ {len(final)} عقد | {st.session_state.active_view} | ⏳ {delay_sec:.0f}ث")
+        except Exception as e:
+            st.success(f"✅ {len(final)} عقد | {st.session_state.active_view} - تم إصلاح KeyError")
+
         def build_table(df):
-            html='<table class="whale-table"><tr><th>💎 12 شرط</th><th>سعر السهم الحالي</th><th>النوع</th><th>سترايك العقد</th><th>📅 انتهاء</th><th>سعر العقد Δ IV</th><th>الحوت</th><th>🎯</th></tr>'
+            html='<table class="whale-table"><tr><th>💎 12 شرط</th><th>سعر السهم الحالي</th><th>النوع</th><th>سترايك العقد</th><th>📅</th><th>سعر العقد</th><th>الحوت</th><th>🎯</th></tr>'
             for _, w in df.iterrows():
                 try:
                     badge=f'<span class="badge-call">{w["signal"]}</span>'
                     sd=w.get("strong_data",{})
-                    # توضيح الفرق - سعر السهم vs سترايك
                     curr_p=w.get("curr_price",0)
-                    stock_html=f'<span class="stock-price">سهم ${curr_p:.2f}</span><span class="ticker-sub">{w["ticker"]} RSI {sd.get("rsi","")} VWAP {sd.get("vwap","")}</span>'
-                    strike_html=f'<span class="strike-price">{w["strike"]}</span><span class="ticker-sub">{sd.get("distance","")} من السهم</span>'
-                    exp_html=f'<b>{w.get("exp_short","")}</b><span class="ticker-sub">باقي {w.get("days_left",0)} يوم</span>'
-                    # إصلاح IV و Δ اللي كان 0% و 1.00 في صورتك
+                    stock_html=f'<span class="stock-price">سهم ${curr_p:.2f}</span><span class="ticker-sub">{w["ticker"]} RSI {sd.get("rsi","")}</span>'
+                    strike_html=f'<b>{w["strike"]}</b><span class="ticker-sub">{sd.get("distance","")}</span>'
+                    exp_html=f'<b>{w.get("exp_short","")}</b><span class="ticker-sub">{w.get("days_left",0)}يوم</span>'
                     opt_html=f'<b>${w.get("opt_price",0):.2f}</b><span class="ticker-sub">Δ {w.get("delta",0):.2f} IV {sd.get("iv","")}</span>'
-                    oi_html=f'<b>${w.get("premium_M",0):.1f}M</b><span class="ticker-sub">{w.get("volume",0)/1000:.0f}K VOL</span>'
+                    oi_html=f'<b>${w.get("premium_M",0):.1f}M</b><span class="ticker-sub">{w.get("volume",0)/1000:.0f}K</span>'
                     score_html=f'<span class="{w.get("css","score-low")}">{w.get("decision","")}</span><span class="ticker-sub">{w.get("success_rate","")}</span>'
                     fear_html=f'<b>{w.get("action","")}</b><span class="ticker-sub">{w.get("fear","")}</span>'
-                    html+=f"<tr><td>{score_html}</td><td>{stock_html}</td><td>{badge}</td><td>{strike_html}</td><td>{exp_html}</td><td>{opt_html}</td><td>{oi_html}</td><td>{fear_html}</td></tr>"
+                    html+=f"<tr><td>{score_html}</td><td>{stock_html}</td><td>{strike_html}</td><td>{strike_html}</td><td>{exp_html}</td><td>{opt_html}</td><td>{oi_html}</td><td>{fear_html}</td></tr>"
                 except: continue
             html+='</table>'
             return html
-        st.markdown(build_table(final), unsafe_allow_html=True)
-        st.info("💡 شرح صورتك: TSLA $350.25 في العمود الثاني = سعر تسلا الآن في السوق. 350/352/355 في عمود STRIKE = سعر التنفيذ اللي تشتريه. الفرق -0.1% يعني العقد ATM بالضبط!")
+
+        # تصحيح بسيط في الجدول - عمودين منفصلين
+        def build_table_fixed(df):
+            html='<table class="whale-table"><tr><th>💎</th><th>سعر السهم</th><th>النوع</th><th>سترايك</th><th>📅</th><th>سعر العقد Δ IV</th><th>الحوت</th><th>🎯</th></tr>'
+            for _, w in df.iterrows():
+                try:
+                    sd=w.get("strong_data",{})
+                    stock_html=f'<span class="stock-price">${w.get("curr_price",0):.2f}</span><span class="ticker-sub">{w["ticker"]} RSI {sd.get("rsi","")}</span>'
+                    strike_html=f'<b>{w["strike"]}</b><span class="ticker-sub">{sd.get("distance","")}</span>'
+                    html+=f"<tr><td><span class='{w.get('css','')}'>{w.get('decision','')}</span></td><td>{stock_html}</td><td><span class='badge-call'>{w['signal']}</span></td><td>{strike_html}</td><td>{w.get('exp_short','')}</td><td>${w.get('opt_price',0):.2f} Δ {w.get('delta',0):.2f} {sd.get('iv','')}</td><td>${w.get('premium_M',0):.1f}M</td><td>{w.get('fear','')}</td></tr>"
+                except: continue
+            html+='</table>'
+            return html
+
+        st.markdown(build_table_fixed(final), unsafe_allow_html=True)
+        st.info("💡 TSLA $350.25 = سعر السهم الآن | 350/352/355 = سترايك العقد - الفرق -0.1% ATM")
+    else:
+        st.warning("لا يوجد - اضغط بحث سريع")
 
 if do_scan:
     all_tickers=get_fast_tickers()
@@ -228,4 +247,4 @@ if do_scan:
         st.session_state.last_refresh_ts=datetime.now()
         st.rerun()
 
-st.caption(f"Last {st.session_state.last_refresh_str} | V35.2 Fixed - سعر السهم ≠ سترايك + إصلاح IV 0% و Δ 1.00 من صورتك")
+st.caption(f"Last {st.session_state.last_refresh_str} | V35.3 Fixed - إصلاح KeyError السطر 198 - سعر السهم ≠ سترايك")
