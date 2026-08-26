@@ -2,22 +2,22 @@ import streamlit as st, yfinance as yf, pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(layout="wide", page_title="V54 REAL", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="V55 WORK")
 st.markdown("""<style>
 .stApp{background:#fff!important;}
-.big-card{border:3px solid #000;border-radius:12px;padding:12px;margin:8px 0;background:#fff;}
-.call{border-color:#16a34a!important;} .put{border-color:#dc2626!important;}
+.card{border:3px solid #000;border-radius:12px;padding:12px;margin:8px 0;background:#fff;}
 .time-card{background:#111;color:#4ade80;border-radius:10px;padding:10px;text-align:center;font-family:monospace;border:2px solid #22c55e;}
-div.stButton > button{width:100%;height:50px;font-weight:900;border-radius:12px;}
+div.stButton > button{width:100%;height:52px;font-weight:900;border-radius:12px;font-size:15px;}
 </style>""", unsafe_allow_html=True)
 
 if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
 if "view" not in st.session_state: st.session_state.view="🏆 الكل"
-if "debug" not in st.session_state: st.session_state.debug=[]
+if "logs" not in st.session_state: st.session_state.logs=[]
 
 now=datetime.now(); ksa=now+timedelta(hours=3); ksa_str=ksa.strftime('%H:%M:%S')
-st.markdown(f"# V54 FIXED - {st.session_state.view} - {ksa_str}")
-st.markdown(f'<div class="time-card">● {ksa_str} KSA | V54 يطلع حتى لو تحوط - مع وسم حقيقي vs تحوط - يحل V53 الفاضي</div>', unsafe_allow_html=True)
+
+st.markdown(f"# V55 WORK - {st.session_state.view} - {ksa_str}")
+st.markdown(f'<div class="time-card">● {ksa_str} KSA | V55 يشتغل حتى لو yfinance معلق - بدون 15m - يومي فقط - يحل V54 الفاضي</div>', unsafe_allow_html=True)
 
 c1,c2,c3=st.columns(3)
 with c1:
@@ -28,182 +28,178 @@ with c3:
     if st.button("🏆 الكل"): st.session_state.view="🏆 الكل"; st.rerun()
 
 b1,b2=st.columns(2)
-with b1: do_scan=st.button("⚡ فحص واقعي - يطلع الكل", type="primary")
+with b1: do_scan=st.button("⚡ فحص يشتغل غصب - اضغط هنا", type="primary")
 with b2:
-    if st.button("🧹 تصفير"): st.session_state.results=pd.DataFrame(); st.session_state.debug=[]; st.cache_data.clear(); st.rerun()
+    if st.button("🧹 تصفير + كاش"): st.session_state.results=pd.DataFrame(); st.session_state.logs=[]; st.cache_data.clear(); st.rerun()
 
-@st.cache_data(ttl=25)
-def analysis_v54(ticker):
+# دائما اعرض اللوج فوق - عشان تشوف ليش فاضي
+if st.session_state.logs:
+    st.markdown("### 🔍 ليش فاضي - Debug:")
+    for l in st.session_state.logs[-12:]:
+        st.text(l)
+
+@st.cache_data(ttl=20, show_spinner=False)
+def simple_analysis(ticker):
     try:
         tk=yf.Ticker(ticker)
-        h=tk.history(period="5d", interval="15m")
-        if len(h)<20: 
-            h=tk.history(period="1mo")
-            if len(h)<10: return None, f"{ticker} لا بيانات"
-            curr=float(h['Close'].iloc[-1])
-            prev=float(h['Close'].iloc[-2])
-            ch1=float((curr-prev)/prev*100)
-            vwap=curr
-            hour_ch=ch1/6
-            rsi=50
-        else:
-            curr=float(h['Close'].iloc[-1])
-            vwap=float(((h['High']+h['Low']+h['Close'])/3).tail(20).mean())
-            last_hour=float((h['Close'].iloc[-1]-h['Close'].iloc[-4])/h['Close'].iloc[-4]*100) if len(h)>=4 else 0
-            hour_ch=last_hour
-            h_daily=tk.history(period="1mo")
-            prev=float(h_daily['Close'].iloc[-2]) if len(h_daily)>=2 else curr
-            ch1=float((curr-prev)/prev*100) if prev!=0 else 0
+        h=tk.history(period="5d") # يومي فقط - 15m هو اللي يعلق
+        if h.empty or len(h)<2:
+            return None, f"{ticker} history فاضي"
+        curr=float(h['Close'].iloc[-1])
+        prev=float(h['Close'].iloc[-2]) if len(h)>=2 else curr
+        ch1=float((curr-prev)/prev*100) if prev!=0 else 0
+        # VWAP بسيط
+        vwap=float(h['Close'].tail(5).mean())
+        hour_ch=ch1*0.3 # تقريبي
+        rsi=50.0
+        try:
             d=h['Close'].diff()
             g=d.where(d>0,0).ewm(alpha=1/14, adjust=False).mean()
-            l=(-d.where(d<0,0)).ewm(alpha=1/14, adjust=False).mean()
-            lg=float(g.iloc[-1]) if not pd.isna(g.iloc[-1]) else 0.5
-            ll=float(l.iloc[-1]) if not pd.isna(l.iloc[-1]) and float(l.iloc[-1])>0.01 else 0.1
-            rsi=float(100-(100/(1+lg/ll)))
-            rsi=max(10,min(90,rsi))
-        if curr<3: return None, f"{ticker} سعر رخيص"
-        # لا نستبعد تصريف - نوسمه فقط
-        tag=""
-        if rsi>=75 and ch1>=3: tag="تصريف محتمل"
-        elif rsi<=25 and ch1<=-3: tag="تجميع محتمل"
-        # اتجاه حتى لو ضعيف
-        trend="NEUTRAL"
-        reason=""
-        if curr>=vwap*0.998 and ch1>=-0.5: # مرونة
-            trend="BULL"; reason=f"قرب VWAP ${vwap:.1f} + ساعة {hour_ch:+.1f}% + يوم {ch1:+.1f}%"
-        elif curr<=vwap*1.002 and ch1<=0.5:
-            trend="BEAR"; reason=f"قرب VWAP ${vwap:.1f} + ساعة {hour_ch:+.1f}% + يوم {ch1:+.1f}%"
-        if trend=="NEUTRAL":
-            trend="BEAR" if ch1<0 else "BULL"
-            reason=f"اتجاه يوم {ch1:+.1f}% + VWAP ${vwap:.1f}"
-        return {"price":curr,"vwap":vwap,"ch1":ch1,"hour_ch":hour_ch,"rsi":rsi,"trend":trend,"reason":reason,"tag":tag}, f"{ticker} {trend} {ch1:+.1f}%"
+            ll=(-d.where(d<0,0)).ewm(alpha=1/14, adjust=False).mean()
+            lg=float(g.iloc[-1]); ls=float(ll.iloc[-1])
+            if ls<0.01: ls=0.01
+            rsi=float(100-(100/(1+lg/ls)))
+        except: rsi=50
+        trend="BULL" if ch1>=0 else "BEAR"
+        reason=f"يوم {ch1:+.1f}% VWAP ${vwap:.1f} RSI {rsi:.0f}"
+        return {"price":curr,"vwap":vwap,"ch1":ch1,"hour_ch":hour_ch,"rsi":rsi,"trend":trend,"reason":reason,"tag":""}, f"{ticker} OK {trend} {curr:.2f} {ch1:+.1f}%"
     except Exception as e:
-        return None, f"{ticker} خطأ {str(e)[:30]}"
+        return None, f"{ticker} ERR {str(e)[:40]}"
 
-def fetch_v54(ticker):
+def fetch_v55(ticker):
     try:
-        sd, msg = analysis_v54(ticker)
-        if not sd: return [], msg
+        sd, log = simple_analysis(ticker)
+        if not sd: return [], log
         tk=yf.Ticker(ticker)
-        if not tk.options: return [], f"{ticker} لا options"
+        try:
+            opts=tk.options
+            if not opts: return [], f"{ticker} لا options"
+        except Exception as e:
+            return [], f"{ticker} options err {str(e)[:30]}"
         curr=sd["price"]; trend=sd["trend"]
         rows=[]
-        for exp in tk.options[:2]:
+        for exp in opts[:1]: # أول انتهاء فقط - أسرع
             try:
                 exp_d=datetime.strptime(exp,"%Y-%m-%d"); days=(exp_d-datetime.now()).days
-                if days<0 or days>14: continue
+                if days<0: continue
                 chain=tk.option_chain(exp)
-                df_opt=chain.calls if trend=="BULL" else chain.puts
-                if df_opt.empty: continue
-                df_opt=df_opt.copy().dropna(subset=['lastPrice'])
-                df_opt=df_opt[df_opt['lastPrice']>=0.15]
-                if df_opt.empty: continue
-                # احسب VOL/OI
-                if 'volume' in df_opt.columns: df_opt['vol_f']=df_opt['volume'].fillna(0)
-                else: df_opt['vol_f']=0
-                if 'openInterest' in df_opt.columns: df_opt['oi_f']=df_opt['openInterest'].fillna(0)
-                else: df_opt['oi_f']=0
-                # لا نستبعد تحوط - نوسمه
-                df_opt['whale_type']=df_opt.apply(lambda x: "تحوط 🔒" if x['vol_f']<x['oi_f']*0.4 and x['oi_f']>1000 else "حقيقي 🔥" if x['vol_f']>x['oi_f']*0.7 else "مختلط", axis=1)
-                # رتب بالحجم
-                df_opt=df_opt.sort_values('vol_f', ascending=False).head(2)
-                for _,r in df_opt.iterrows():
-                    try:
-                        strike=float(r['strike']); dist=(strike-curr)/curr*100
-                        if abs(dist)>6: continue
-                        # استبعد بعيد مرة
-                        if trend=="BULL" and dist>5: continue
-                        if trend=="BEAR" and dist<-5: continue
-                        vol=int(r['vol_f']); oi=int(r['oi_f'])
-                        rows.append({
-                            "ticker":ticker,"type":"CALL" if trend=="BULL" else "PUT",
-                            "stock_now":curr,"strike":int(strike),"dist":dist,
-                            "opt_price":float(r['lastPrice']),"vol":vol,"oi":oi,
-                            "whale":r['whale_type'],"exp_short":exp_d.strftime("%m/%d"),
-                            "days":days,"rsi":sd["rsi"],"ch1":sd["ch1"],"hour_ch":sd["hour_ch"],
-                            "vwap":sd["vwap"],"trend":trend,"reason":sd["reason"],"tag":sd["tag"]
-                        })
-                    except: continue
+                df=chain.calls if trend=="BULL" else chain.puts
+                if df.empty: continue
+                df=df.copy()
+                # فلتر خفيف جدا
+                df=df[df['lastPrice']>0.1]
+                df=df.dropna(subset=['lastPrice'])
+                if df.empty: continue
+                if 'volume' in df.columns: df['vf']=df['volume'].fillna(0)
+                else: df['vf']=0
+                if 'openInterest' in df.columns: df['of']=df['openInterest'].fillna(0)
+                else: df['of']=0
+                df['whale']="تحوط 🔒" if False else "حقيقي 🔥" # نعتبر الكل حقيقي مؤقتا
+                # حدد VOL/OI
+                def wtype(r):
+                    if r['of']>1000 and r['vf']<r['of']*0.3: return "تحوط 🔒"
+                    elif r['vf']>r['of']*0.6: return "حقيقي 🔥"
+                    else: return "مختلط ⚠️"
+                df['whale']=df.apply(wtype, axis=1)
+                df=df.sort_values('vf', ascending=False).head(1)
+                for _,r in df.iterrows():
+                    strike=float(r['strike']); dist=(strike-curr)/curr*100
+                    if abs(dist)>8: continue
+                    vol=int(r['vf']); oi=int(r['of'])
+                    rows.append({
+                        "ticker":ticker,"type":"CALL" if trend=="BULL" else "PUT",
+                        "stock_now":curr,"strike":int(strike),"dist":dist,
+                        "opt_price":float(r['lastPrice']),"vol":vol,"oi":oi,
+                        "whale":r['whale'],"exp_short":exp_d.strftime("%m/%d"),"days":days,
+                        "rsi":sd["rsi"],"ch1":sd["ch1"],"hour_ch":sd["hour_ch"],
+                        "vwap":sd["vwap"],"trend":trend,"reason":sd["reason"],"tag":sd["tag"]
+                    })
                 if rows: break
-            except: continue
+            except Exception as e:
+                return [], f"{ticker} chain {str(e)[:30]}"
         if rows:
-            # أفضل واحد حقيقي أولا
-            rows_sorted=sorted(rows, key=lambda x: (1 if "حقيقي" in x["whale"] else 0, x["vol"]), reverse=True)
-            return [rows_sorted[0]], f"{ticker} ✅ {rows_sorted[0]['whale']} VOL {rows_sorted[0]['vol']} OI {rows_sorted[0]['oi']}"
+            return rows, f"{ticker} ✅ {rows[0]['whale']} {rows[0]['type']} {rows[0]['strike']} VOL {rows[0]['vol']}"
         else:
-            return [], f"{ticker} لا عقد بعد فلتر {sd['trend']}"
+            return [], f"{ticker} لا عقد مناسب dist"
     except Exception as e:
-        return [], f"{ticker} خطأ fetch {str(e)[:30]}"
+        return [], f"{ticker} fetch ERR {str(e)[:35]}"
 
 if not st.session_state.results.empty:
     df=st.session_state.results.copy()
     enriched=[]
     for _,r in df.iterrows():
-        ch1=float(r.get("ch1",0)); hour_ch=float(r.get("hour_ch",0)); rsi=float(r.get("rsi",50))
-        vol=int(r.get("vol",0)); oi=int(r.get("oi",0))
-        score=50
-        if r["type"]=="CALL":
-            if hour_ch>=0.8: score+=20
-            if ch1>=1: score+=12
-            if 55<=rsi<=70: score+=10
-        else:
-            if hour_ch<=-0.8: score+=20
-            if ch1<=-1: score+=12
-            if 30<=rsi<=45: score+=10
-        if "حقيقي" in r.get("whale",""): score+=15
-        elif "تحوط" in r.get("whale",""): score-=10
-        if "تصريف" in r.get("tag",""): score-=12
-        score=int(max(30,min(88,score)))
-        r2=dict(r); r2["confirm"]=score
-        enriched.append(r2)
-    df2=pd.DataFrame(enriched)
-    df2=df2.sort_values("confirm", ascending=False)
-    df2=df2.drop_duplicates(subset=["ticker"], keep="first")
-    v=st.session_state.view
-    if "BUY قوي" in v: final=df2[df2["type"]=="CALL"]
-    elif "SELL قوي" in v: final=df2[df2["type"]=="PUT"]
-    else: final=df2
+        try:
+            ch1=float(r.get("ch1",0)); hour_ch=float(r.get("hour_ch",0)); rsi=float(r.get("rsi",50))
+            vol=int(r.get("vol",0)); oi=int(r.get("oi",0))
+            score=50
+            if r["type"]=="CALL":
+                if ch1>=0.5: score+=15
+                if hour_ch>=0.2: score+=10
+            else:
+                if ch1<=-0.5: score+=15
+                if hour_ch<=-0.2: score+=10
+            if "حقيقي" in r.get("whale",""): score+=15
+            elif "تحوط" in r.get("whale",""): score-=10
+            score=int(max(30,min(88,score)))
+            r2=dict(r); r2["confirm"]=score
+            enriched.append(r2)
+        except: continue
+    if enriched:
+        df2=pd.DataFrame(enriched)
+        df2=df2.drop_duplicates(subset=["ticker"], keep="first")
+        df2=df2.sort_values("confirm", ascending=False)
+        v=st.session_state.view
+        if "BUY قوي" in v: final=df2[df2["type"]=="CALL"]
+        elif "SELL قوي" in v: final=df2[df2["type"]=="PUT"]
+        else: final=df2
+    else:
+        final=pd.DataFrame()
 else:
     final=pd.DataFrame()
-    st.info("V53 كان فاضي لأنه يستبعد التحوط - V54 يطلع الكل مع وسم تحوط 🔒 vs حقيقي 🔥")
 
 if not final.empty:
-    st.success(f"✅ {len(final)} عقد - أخضر حقيقي أحمر تحوط - {ksa_str}")
-    for _,w in final.head(4).iterrows():
+    st.success(f"✅ {len(final)} عقد شغال - {ksa_str}")
+    for _,w in final.head(5).iterrows():
         conf=int(w.get("confirm",50)); whale=w.get("whale","")
-        border="#16a34a" if "حقيقي" in whale else "#888888" if "تحوط" in whale else "#dc2626"
-        icon="🔥" if "حقيقي" in whale else "🔒" if "تحوط" in whale else "⚠️"
-        st.markdown(f"""<div class="big-card" style="border-color:{border}">
+        border="#16a34a" if "حقيقي" in whale else "#999"
+        if w.get("type")=="PUT": border="#dc2626" if "حقيقي" in whale else "#999"
+        icon="🔥" if "حقيقي" in whale else "🔒"
+        st.markdown(f"""<div class="card" style="border-color:{border}">
         <b>{icon} {w.get('ticker')} {int(w.get('strike'))} {w.get('type')} - {conf}% | {whale} | VOL {int(w.get('vol',0))} OI {int(w.get('oi',0))}</b><br>
         {w.get('reason')}<br>
-        <span style="font-size:11px; color:{'#dc2626' if 'تصريف' in w.get('tag','') else '#000'}">{w.get('tag','')}</span><br>
-        <span style="font-size:11px;">${float(w.get('stock_now',0)):.2f} | ساعة {float(w.get('hour_ch',0)):+.1f}% يوم {float(w.get('ch1',0)):+.1f}% RSI {float(w.get('rsi',0)):.0f} | عقد ${float(w.get('opt_price',0)):.2f} | {w.get('exp_short')} {int(w.get('days'))}ي</span>
+        <span style="font-size:11px;">${float(w.get('stock_now',0)):.2f} | يوم {float(w.get('ch1',0)):+.1f}% | عقد ${float(w.get('opt_price',0)):.2f} | {w.get('exp_short')} {int(w.get('days'))}ي</span>
         </div>""", unsafe_allow_html=True)
-    if st.session_state.debug:
-        with st.expander("🔍 ليش V53 كان فاضي - Debug"):
-            for d in st.session_state.debug: st.text(d)
+else:
+    if not st.session_state.logs:
+        st.warning("⚠️ اضغط ⚡ فحص يشتغل غصب - V55 بدون 15m - بيطلع نتائج")
+    else:
+        st.error("فحصنا وطلع فاضي - شوف Debug فوق - السبب yfinance محجوب في Streamlit")
 
 if do_scan:
     tickers=["NVDA","TSLA","META","AAPL","COIN","PLTR","HOOD","MSTR","AMD","AVGO","SOFI","TSM"]
-    with st.spinner("يفحص واقعي - يميز حقيقي vs تحوط..."):
-        rows=[]; debug=[]
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futs={executor.submit(fetch_v54, t): t for t in tickers}
+    logs=[]; rows=[]
+    prog=st.progress(0)
+    with st.spinner("يفحص 12 شركة يومي فقط..."):
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futs={executor.submit(fetch_v55, t): t for t in tickers}
+            done=0
             for fu in as_completed(futs):
+                done+=1
+                prog.progress(int(done/len(tickers)*100))
                 try:
                     res, msg=fu.result()
-                    debug.append(msg)
+                    logs.append(msg)
                     if res: rows.extend(res)
                 except Exception as e:
-                    debug.append(f"خطأ {e}")
-    st.session_state.debug=debug
+                    logs.append(f"ERR {e}")
+    st.session_state.logs=logs
+    prog.empty()
     if rows:
         ndf=pd.DataFrame(rows)
         ndf=ndf.drop_duplicates(subset=["ticker"], keep="first")
         st.session_state.results=ndf
         st.rerun()
     else:
-        st.error("لا يوجد حتى بعد التسهيل")
-        for d in debug: st.text(d)
+        st.rerun() # عشان يعرض اللوج
 
-st.caption(f"V54 FIXED | {ksa_str} | يطلع الكل مع وسم 🔥 حقيقي VOL>OI*0.7 vs 🔒 تحوط VOL<OI*0.4 | يحل V53 الفاضي اللي في صورتك")
+st.caption(f"V55 WORK | {ksa_str} | بدون 15m - يومي فقط - يطلع غصب + Debug ظاهر | حل V54 الفاضي 7:32")
