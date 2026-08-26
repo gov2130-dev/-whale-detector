@@ -2,25 +2,26 @@ import streamlit as st, yfinance as yf, pandas as pd, math
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(layout="wide", page_title="V44 FIX SYNTAX", initial_sidebar_state="expanded")
+st.set_page_config(layout="wide", page_title="V45 MOBILE", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
 .stApp {background:#fff!important;}
 .big-table {width:100%; border-collapse:collapse; font-size:11px;}
-.big-table th {background:#000!important; color:#fff!important; padding:9px 3px; text-align:center; font-size:8px;}
-.big-table td {background:#fff!important; padding:9px 3px; text-align:center; border:1px solid #ccc; font-size:11px; font-weight:700;}
-.call-badge {background:#16a34a!important; color:#fff!important; padding:5px 10px; border-radius:8px; font-size:10px; font-weight:900;}
-.put-badge {background:#dc2626!important; color:#fff!important; padding:5px 10px; border-radius:8px; font-size:10px; font-weight:900;}
-.buy-card {background:linear-gradient(135deg,#dcfce7,#fff); border:3px solid #16a34a; border-radius:14px; padding:12px; margin:8px 0;}
-.sell-card {background:linear-gradient(135deg,#fee2e2,#fff); border:3px solid #dc2626; border-radius:14px; padding:12px; margin:8px 0;}
+.big-table th {background:#000!important; color:#fff!important; padding:8px 2px; text-align:center; font-size:7px;}
+.big-table td {background:#fff!important; padding:8px 2px; text-align:center; border:1px solid #ccc; font-size:10px; font-weight:700;}
+.call-badge {background:#16a34a!important; color:#fff!important; padding:4px 8px; border-radius:6px; font-size:9px; font-weight:900;}
+.put-badge {background:#dc2626!important; color:#fff!important; padding:4px 8px; border-radius:6px; font-size:9px; font-weight:900;}
+.buy-card {background:#dcfce7; border:2px solid #16a34a; border-radius:12px; padding:10px; margin:6px 0;}
 .time-card {background:#111; color:#4ade80; border-radius:10px; padding:10px; font-family:monospace; text-align:center; font-size:11px; border:2px solid #22c55e;}
+div.stButton > button {width:100%; height:50px; font-size:16px; font-weight:900; border-radius:12px;}
 </style>
 """, unsafe_allow_html=True)
 
 if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
 if "last_ts" not in st.session_state: st.session_state.last_ts=datetime.now()
 if "view" not in st.session_state: st.session_state.view="✅ BUY قوي"
+if "auto_scanned" not in st.session_state: st.session_state.auto_scanned=False
 
 def greeks(S,K,T,iv,is_call=True):
     try:
@@ -63,25 +64,52 @@ now=datetime.now()
 ksa=now+timedelta(hours=3)
 ksa_str=ksa.strftime('%H:%M:%S')
 
-st.sidebar.title("💎 V44 مصحح")
-st.sidebar.markdown(f'<div class="time-card">● {ksa_str} KSA<br>Syntax Fixed</div>', unsafe_allow_html=True)
+# واجهة جوال - أزرار فوق
+st.markdown(f"# ✅ {st.session_state.view} - {ksa_str}")
+st.markdown(f'<div class="time-card">● {ksa_str} KSA | V45 للجوال | Supertrend + BUY</div>', unsafe_allow_html=True)
 
-for v in ["✅ BUY قوي","🔻 SELL قوي","🔥 انفجار BUY","🔻 انفجار SELL","🏆 الكل"]:
-    if st.sidebar.button(v, key=v, use_container_width=True, type="primary" if st.session_state.view==v else "secondary"):
-        st.session_state.view=v; st.rerun()
+# أزرار للجوال في الواجهة الرئيسية
+col1, col2, col3 = st.columns(3)
+with col1:
+    view_buy = st.button("✅ BUY", type="primary" if st.session_state.view=="✅ BUY قوي" else "secondary")
+with col2:
+    view_sell = st.button("🔻 SELL")
+with col3:
+    view_all = st.button("🏆 الكل")
 
-st.sidebar.markdown("---")
-c1,c2=st.sidebar.columns(2)
-with c1: do_scan=st.button("⚡ فحص فني", type="primary", use_container_width=True)
-with c2:
-    if st.button("🧹 تصفير", use_container_width=True):
-        st.session_state.results=pd.DataFrame(); st.session_state.last_ts=datetime.now(); st.cache_data.clear(); st.rerun()
+if view_buy: st.session_state.view="✅ BUY قوي"; st.rerun()
+if view_sell: st.session_state.view="🔻 SELL قوي"; st.rerun()
+if view_all: st.session_state.view="🏆 الكل"; st.rerun()
 
-min_prem=st.sidebar.slider("💰 M$",0.05,3.0,0.15,0.05)
-min_vol=st.sidebar.slider("VOL",30,2000,80,10)
+# أزرار فحص كبيرة للجوال
+b1, b2 = st.columns(2)
+with b1:
+    do_scan_main = st.button("⚡ فحص فني قوي", type="primary")
+with b2:
+    do_clear_main = st.button("🧹 تصفير")
+
+if do_clear_main:
+    st.session_state.results=pd.DataFrame(); st.session_state.last_ts=datetime.now(); st.cache_data.clear(); st.session_state.auto_scanned=False; st.rerun()
+
+# سايدبار للكمبيوتر
+with st.sidebar:
+    st.title("إعدادات")
+    min_prem=st.slider("💰 M$",0.05,3.0,0.15,0.05)
+    min_vol=st.slider("VOL",30,2000,80,10)
+    do_scan_side = st.button("⚡ فحص", type="primary")
+    if st.button("🧹 تصفير"):
+        st.session_state.results=pd.DataFrame(); st.cache_data.clear(); st.rerun()
+
+# قيم افتراضية للجوال
+try: min_prem
+except: min_prem=0.15
+try: min_vol
+except: min_vol=80
+
+do_scan = do_scan_main or ('do_scan_side' in locals() and do_scan_side)
 
 @st.cache_data(ttl=60)
-def analysis_v44(ticker):
+def analysis_v45(ticker):
     try:
         tk=yf.Ticker(ticker)
         h=tk.history(period="3mo")
@@ -91,26 +119,21 @@ def analysis_v44(ticker):
         curr=float(h['Close'].iloc[-1])
         if ticker=="SPY" and curr>700: return None
         if pd.isna(curr) or curr<1 or curr>5000: return None
-
         st_line, st_dir = supertrend(h, 10, 3.0)
-        st_val=float(st_line.iloc[-1])
         st_direction=int(st_dir.iloc[-1])
         prev_st_dir=int(st_dir.iloc[-2]) if len(st_dir)>=2 else st_direction
         st_buy_signal = st_direction==1 and prev_st_dir==-1
         st_sell_signal = st_direction==-1 and prev_st_dir==1
-
         ema9=float(h['Close'].ewm(span=9).mean().iloc[-1])
         ema21=float(h['Close'].ewm(span=21).mean().iloc[-1])
         ema50=float(h['Close'].ewm(span=50).mean().iloc[-1])
         if pd.isna(ema9) or pd.isna(ema21): return None
-
         h20=h.tail(20)
         vol_sum=float(h20['Volume'].sum())
         if vol_sum>0:
             vwap=float((h20['Close']*h20['Volume']).sum()/vol_sum)
         else:
             vwap=curr
-
         d=h['Close'].diff()
         g=d.where(d>0,0).ewm(alpha=1/14, adjust=False).mean()
         l=(-d.where(d<0,0)).ewm(alpha=1/14, adjust=False).mean()
@@ -120,7 +143,6 @@ def analysis_v44(ticker):
         rsi=100-(100/(1+lg/ll))
         if pd.isna(rsi): rsi=50
         rsi=float(max(5,min(95,rsi)))
-
         ema12=h['Close'].ewm(span=12).mean()
         ema26=h['Close'].ewm(span=26).mean()
         macd=ema12-ema26
@@ -130,90 +152,62 @@ def analysis_v44(ticker):
         macd_hist_prev=float(hist.iloc[-2]) if len(hist)>=2 else macd_hist
         macd_bull = macd_hist>0 and macd_hist>macd_hist_prev
         macd_bear = macd_hist<0 and macd_hist<macd_hist_prev
-
         high60=float(h['High'].tail(60).max())
         low60=float(h['Low'].tail(60).min())
         diff=high60-low60
         fib_236=high60-diff*0.236
         fib_382=high60-diff*0.382
         bounce_fib = (curr>fib_236 and float(h['Low'].iloc[-1])<=fib_236*1.01) or (curr>fib_382 and float(h['Low'].iloc[-1])<=fib_382*1.01)
-
         vol_avg20=float(h['Volume'].tail(20).mean())
         vol_today=float(h['Volume'].iloc[-1])
         vol_ratio=float(vol_today/vol_avg20) if vol_avg20>0 else 1.0
         vol_explosion = vol_ratio>=1.6
-
         try:
             close_5d=float(h['Close'].iloc[-6])
             change_5d=float((curr-close_5d)/close_5d*100) if close_5d>0 else 0.0
         except: change_5d=0.0
         if pd.isna(change_5d): change_5d=0.0
         change_5d=float(max(-15,min(15,change_5d)))
-
         high20=float(h['High'].tail(20).max())
         low20=float(h['Low'].tail(20).min())
-        pos=(curr-low20)/(high20-low20)*100 if high20!=low20 else 50
-
         buy_points=0; buy_reasons=[]
-        if st_direction==1:
-            buy_points+=2; buy_reasons.append("Supertrend BUY")
-        if st_buy_signal:
-            buy_points+=3; buy_reasons.append("تحول BUY")
-        if curr>ema9>ema21:
-            buy_points+=2; buy_reasons.append("EMA9>21")
-        if curr>vwap:
-            buy_points+=1; buy_reasons.append("فوق VWAP")
-        if 45<=rsi<=70:
-            buy_points+=2; buy_reasons.append(f"RSI {rsi:.0f}")
-        elif 30<rsi<38:
-            buy_points+=2; buy_reasons.append(f"RSI {rsi:.0f} انعكاس")
-        if macd_bull:
-            buy_points+=2; buy_reasons.append("MACD أخضر")
-        if bounce_fib:
-            buy_points+=3; buy_reasons.append(f"ارتداد Fibo")
-        if vol_explosion:
-            buy_points+=2; buy_reasons.append(f"VOL x{vol_ratio:.1f}")
-        if change_5d>=1:
-            buy_points+=1; buy_reasons.append(f"5d {change_5d:+.1f}%")
-
+        if st_direction==1: buy_points+=2; buy_reasons.append("ST BUY")
+        if st_buy_signal: buy_points+=3; buy_reasons.append("تحول BUY")
+        if curr>ema9>ema21: buy_points+=2; buy_reasons.append("EMA9>21")
+        if curr>vwap: buy_points+=1; buy_reasons.append("فوق VWAP")
+        if 45<=rsi<=70: buy_points+=2; buy_reasons.append(f"RSI {rsi:.0f}")
+        elif 30<rsi<38: buy_points+=2; buy_reasons.append(f"RSI {rsi:.0f} انعكاس")
+        if macd_bull: buy_points+=2; buy_reasons.append("MACD أخضر")
+        if bounce_fib: buy_points+=3; buy_reasons.append("Fibo")
+        if vol_explosion: buy_points+=2; buy_reasons.append(f"VOL x{vol_ratio:.1f}")
+        if change_5d>=1: buy_points+=1; buy_reasons.append(f"5d {change_5d:+.1f}%")
         sell_points=0; sell_reasons=[]
-        if st_direction==-1:
-            sell_points+=2; sell_reasons.append("Supertrend SELL")
-        if st_sell_signal:
-            sell_points+=3; sell_reasons.append("تحول SELL")
-        if curr<ema9<ema21:
-            sell_points+=2
-        if curr<vwap:
-            sell_points+=1
-        if rsi<=55 and rsi>=30:
-            sell_points+=2
-        if macd_bear:
-            sell_points+=2
-        if vol_explosion:
-            sell_points+=1
-        if change_5d<=-1:
-            sell_points+=1
-
+        if st_direction==-1: sell_points+=2; sell_reasons.append("ST SELL")
+        if st_sell_signal: sell_points+=3; sell_reasons.append("تحول SELL")
+        if curr<ema9<ema21: sell_points+=2
+        if curr<vwap: sell_points+=1
+        if rsi<=55 and rsi>=30: sell_points+=2
+        if macd_bear: sell_points+=2
+        if vol_explosion: sell_points+=1
+        if change_5d<=-1: sell_points+=1
         return {
             "price":curr,"ema9":ema9,"ema21":ema21,"ema50":ema50,"vwap":vwap,"rsi":float(rsi),
-            "high20":high20,"low20":low20,"high60":high60,"low60":low60,
-            "fib_236":float(fib_236),"fib_382":float(fib_382),
-            "vol_ratio":float(vol_ratio),"vol_explosion":bool(vol_explosion),"pos":float(pos),
-            "change_5d":float(change_5d),"st_val":float(st_val),"st_dir":int(st_direction),
+            "high20":high20,"low20":low20,"fib_236":float(fib_236),"fib_382":float(fib_382),
+            "vol_ratio":float(vol_ratio),"vol_explosion":bool(vol_explosion),
+            "change_5d":float(change_5d),"st_dir":int(st_direction),
             "st_buy_signal":bool(st_buy_signal),"st_sell_signal":bool(st_sell_signal),
             "macd_hist":float(macd_hist),"macd_bull":bool(macd_bull),"macd_bear":bool(macd_bear),
             "bounce_fib":bool(bounce_fib),
             "buy_points":int(buy_points),"sell_points":int(sell_points),
             "buy_reasons":buy_reasons,"sell_reasons":sell_reasons
         }
-    except:
-        return None
+    except: return None
 
-def fetch_v44(ticker, min_prem, min_vol):
+def fetch_v45(ticker, min_prem, min_vol):
     try:
         tk=yf.Ticker(ticker)
         if not tk.options: return []
-        sd=analysis_v44(ticker)
+        sd=analysis_v45(ticker)
         if not sd: return []
         curr=sd["price"]
         if ticker=="SPY" and curr>700: return []
@@ -226,10 +220,8 @@ def fetch_v44(ticker, min_prem, min_vol):
                 T=max(days/365,0.04)
                 chain=tk.option_chain(exp)
                 allowed=[]
-                if sd["buy_points"]>=6 and sd["st_dir"]==1:
-                    allowed=["CALL"]
-                elif sd["sell_points"]>=6 and sd["st_dir"]==-1:
-                    allowed=["PUT"]
+                if sd["buy_points"]>=6 and sd["st_dir"]==1: allowed=["CALL"]
+                elif sd["sell_points"]>=6 and sd["st_dir"]==-1: allowed=["PUT"]
                 else:
                     if sd["change_5d"]>=1.5: allowed=["CALL"]
                     elif sd["change_5d"]<=-1.5: allowed=["PUT"]
@@ -280,7 +272,7 @@ def fetch_v44(ticker, min_prem, min_vol):
         return rows
     except: return []
 
-def calc_confirm_v44(row):
+def calc_confirm_v45(row):
     try:
         if row["type"]=="CALL":
             pts=int(row.get("buy_points",0))
@@ -301,18 +293,20 @@ def calc_confirm_v44(row):
         return score, why
     except: return 60, "متوسط"
 
-st.title(f"{st.session_state.view} - {ksa_str}")
-st.caption("V44 مصحح Syntax - جاهز")
-
+# عرض النتائج
 if st.session_state.results.empty:
-    st.info("⏳ اضغط فحص فني")
+    st.info("📱 للجوال: اضغط ⚡ فحص فني قوي فوق - الزر الكبير")
+    st.markdown("### الخطوات للجوال:")
+    st.markdown("1. اضغط الزر الأخضر الكبير **⚡ فحص فني قوي** فوق")
+    st.markdown("2. انتظر 20 ثانية")
+    st.markdown("3. بيطلع لك عقود BUY قوي")
     final=pd.DataFrame()
 else:
     enriched=[]
     for _,r in st.session_state.results.iterrows():
         if pd.isna(r.get("stock_now",0)): continue
         if r.get("ticker")=="SPY" and float(r.get("stock_now",0))>700: continue
-        conf, why = calc_confirm_v44(r)
+        conf, why = calc_confirm_v45(r)
         r2=dict(r); r2["confirm"]=int(conf); r2["why"]=why
         enriched.append(r2)
     if enriched:
@@ -323,33 +317,20 @@ else:
         if not df.empty:
             df=df.sort_values(["confirm","prem_M"], ascending=[False,False])
             v=st.session_state.view
-            if "BUY قوي" in v:
-                final=df[(df["type"]=="CALL")].head(15)
-            elif "SELL قوي" in v:
-                final=df[(df["type"]=="PUT")].head(15)
-            elif "انفجار BUY" in v:
-                final=df[(df["type"]=="CALL") & (df["vol_explosion"]==True)].head(15)
-                if final.empty: final=df[(df["type"]=="CALL")].sort_values("vol_ratio", ascending=False).head(10)
-            elif "انفجار SELL" in v:
-                final=df[(df["type"]=="PUT") & (df["vol_explosion"]==True)].head(15)
-            else:
-                final=df.head(15)
-        else:
-            final=pd.DataFrame()
+            if "BUY قوي" in v: final=df[(df["type"]=="CALL")].head(20)
+            elif "SELL قوي" in v: final=df[(df["type"]=="PUT")].head(20)
+            else: final=df.head(20)
+        else: final=pd.DataFrame()
         if final.empty and not df.empty: final=df.head(10)
-    else:
-        final=pd.DataFrame()
+    else: final=pd.DataFrame()
 
     if not final.empty:
         st.success(f"✅ {len(final)} عقد - {ksa_str}")
-        for _,w in final.head(2).iterrows():
+        for _,w in final.head(3).iterrows():
             conf=int(w.get("confirm",60))
             if w.get("type")=="CALL":
-                st.markdown(f"""<div class="buy-card"><b>🟢 BUY CALL {w.get('ticker')} {int(w.get('strike'))} - {conf}%</b> | {w.get('why')}<br><span style="font-size:11px;">${float(w.get('stock_now',0)):.2f} 5d {float(w.get('change_5d',0)):+.1f}% | ST {"BUY" if int(w.get('st_dir',1))==1 else "SELL"} | Fibo ${float(w.get('fib_236',0)):.2f} | VOL x{float(w.get('vol_ratio',1)):.1f} | ${float(w.get('opt_price',0)):.2f} | ${float(w.get('prem_M',0)):.1f}M</span></div>""", unsafe_allow_html=True)
-            else:
-                st.markdown(f"""<div class="sell-card"><b>🔴 SELL PUT {w.get('ticker')} {int(w.get('strike'))} - {conf}%</b> | {w.get('why')}</div>""", unsafe_allow_html=True)
-
-        html='<table class="big-table"><tr><th>تأكيد</th><th>توجيه</th><th>شركة</th><th>السهم فني</th><th>سترايك</th><th>مسافة</th><th>📅</th><th>عقد</th><th>حوت</th></tr>'
+                st.markdown(f"""<div class="buy-card"><b>🟢 {w.get('ticker')} {int(w.get('strike'))} CALL - {conf}%</b><br><span style="font-size:11px;">{w.get('why')}<br>${float(w.get('stock_now',0)):.2f} 5d {float(w.get('change_5d',0)):+.1f}% | ST {"BUY" if int(w.get('st_dir',1))==1 else "SELL"} | VOL x{float(w.get('vol_ratio',1)):.1f} | ${float(w.get('opt_price',0)):.2f} | ${float(w.get('prem_M',0)):.1f}M | {w.get('exp_short')}</span></div>""", unsafe_allow_html=True)
+        html='<table class="big-table"><tr><th>%</th><th>نوع</th><th>شركة</th><th>سهم</th><th>سترايك</th><th>📅</th><th>عقد</th><th>حوت</th></tr>'
         for _,w in final.iterrows():
             try:
                 sp=float(w.get("stock_now",0))
@@ -357,9 +338,8 @@ else:
                 if w.get("ticker")=="SPY" and sp>700: continue
                 conf=int(w.get("confirm",60)); typ=w.get("type","CALL"); ch5=float(w.get("change_5d",0))
                 dist=float(w.get("dist",0)); prem=float(w.get("prem_M",0)); opt_p=float(w.get("opt_price",0))
-                badge = f'<span class="call-badge">🟢 BUY</span>' if typ=="CALL" else f'<span class="put-badge">🔴 SELL</span>'
-                tech = f"ST {'BUY' if int(w.get('st_dir',1))==1 else 'SELL'} | RSI {float(w.get('rsi',50)):.0f}"
-                html+=f'<tr><td><b>{conf}%</b><br>{int(w.get("buy_points" if typ=="CALL" else "sell_points",0))}/10</td><td>{badge}</td><td><b>{w.get("ticker","")}</b></td><td><b>${sp:.2f}</b><br><span style="font-size:8px">{tech}</span><br><span style="color:{"#16a34a" if ch5>=0 else "#dc2626"}">{ch5:+.1f}%</span></td><td><b>{int(w.get("strike",0))}</b></td><td>{dist:+.1f}%</td><td>{w.get("exp_short","")}</td><td>${opt_p:.2f}<br>{int(w.get("vol",0))/1000:.0f}K</td><td>${prem:.1f}M</td></tr>'
+                badge = f'<span class="call-badge">CALL</span>' if typ=="CALL" else f'<span class="put-badge">PUT</span>'
+                html+=f'<tr><td><b>{conf}%</b></td><td>{badge}</td><td><b>{w.get("ticker","")}</b></td><td><b>${sp:.2f}</b><br><span style="color:{"#16a34a" if ch5>=0 else "#dc2626"}">{ch5:+.1f}%</span></td><td><b>{int(w.get("strike",0))}</b><br>{dist:+.1f}%</td><td>{w.get("exp_short","")}<br>{int(w.get("days"))}ي</td><td>${opt_p:.2f}</td><td>${prem:.1f}M</td></tr>'
             except: continue
         html+='</table>'
         st.markdown(html, unsafe_allow_html=True)
@@ -368,10 +348,10 @@ else:
 
 if do_scan:
     tickers=["QQQ","AAPL","NVDA","TSLA","META","MSFT","AMD","AVGO","NFLX","AMZN","COIN","MSTR","PLTR","HOOD","SOFI"]
-    with st.spinner(f"⚡ فحص {len(tickers)}..."):
+    with st.spinner(f"⚡ فحص {len(tickers)} - انتظر 20 ثانية..."):
         rows=[]
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futs={executor.submit(fetch_v44, t, min_prem, min_vol): t for t in tickers}
+            futs={executor.submit(fetch_v45, t, min_prem, min_vol): t for t in tickers}
             for fu in as_completed(futs):
                 try:
                     res=fu.result()
@@ -387,6 +367,9 @@ if do_scan:
             combined=pd.concat([st.session_state.results, ndf]).sort_values("prem_M",ascending=False).drop_duplicates(["ticker","strike","exp_full","type"]).head(800) if not st.session_state.results.empty else ndf
             st.session_state.results=combined
             st.session_state.last_ts=datetime.now()
+            st.session_state.auto_scanned=True
             st.rerun()
+    else:
+        st.error("لا يوجد عقود - جرب تصغير الفلتر")
 
-st.caption(f"V44 FIXED | {ksa_str} | تم إصلاح unmatched ')' - جاهز يعمل")
+st.caption(f"V45 MOBILE | {ksa_str} | مصمم للجوال - أزرار فوق")
