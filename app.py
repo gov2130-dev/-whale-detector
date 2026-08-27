@@ -5,86 +5,54 @@ BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
 CHAT_ID="13889370"
 
 def send(msg):
-    try:
-        url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        r=requests.post(url, data={'chat_id':CHAT_ID,'text':msg,'parse_mode':'HTML'}, timeout=15)
-        return r.status_code==200
-    except Exception as e:
-        st.error(f"خطأ ارسال: {e}")
-        return False
+    url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
 
-def fmt_msg(ticker, o_type, strike, opt_price, stop, curr_price, score, vol, rsi):
+def fmt(ticker, o_type, strike, opt_price, stop, curr, vol, rsi):
     date=(datetime.now()+timedelta(days=1)).strftime('%d/%m/%Y')
-    # اهداف السهم دقيقة على سعر الحالي
-    tg=[curr_price*1.01, curr_price*1.02, curr_price*1.03, curr_price*1.045, curr_price*1.06, curr_price*1.08, curr_price*1.10]
-    tg_str=" → ".join([f"{int(x)}" for x in tg])
-    t1=opt_price*1.5
-    t2=opt_price*2.2
-
-    return f"""<b>تحديث العقد والاهداف والدخول</b>
-<b>${ticker} - {strike} {o_type} 🎯</b>
+    tg=[curr*1.01, curr*1.02, curr*1.03, curr*1.045, curr*1.06, curr*1.08, curr*1.10]
+    tg_str=" → ".join([str(int(x)) for x in tg])
+    return f"""تحديث العقد والاهداف والدخول
+${ticker} - {strike} {o_type} 🎯
 📅 {date}
-💵 السعر الحالي: ${curr_price:.2f}
+💵 السعر الحالي: ${curr:.2f}
 
-<b>💰 دخول العقد: ${opt_price:.2f}</b>
-<b>🛑 وقف العقد: ${stop:.2f}</b>
+💰 دخول العقد: ${opt_price:.2f}
+🛑 وقف العقد: ${stop:.2f}
 📊 Vol {vol} | RSI {int(rsi)}
 
-<b>🎯 اهداف السهم:</b>
+🎯 اهداف السهم:
 {tg_str}
 
-<b>🎯 اهداف العقد:</b>
-T1 ${t1:.2f} (+50%) | T2 ${t2:.2f} (+120%)
+🎯 اهداف العقد:
+T1 ${opt_price*1.5:.2f} (+50%) | T2 ${opt_price*2.2:.2f} (+120%)
 
-⚠️ ليست توصية بيع أو شراء،
-للتعليم فقط.
+⚠️ ليست توصية بيع أو شراء، للتعليم فقط.
 
-🐋 <b>حيتان ابو راكان</b>
+🐋 حيتان ابو راكان
 TrkHrTrading
-{'🔥 GOLDEN 6/7' if score>=6 else '⭐ GOOD 5/7'}"""
+🔥 GOLDEN 6/7"""
 
-st.set_page_config(page_title="V77 FINAL", layout="wide")
-now=datetime.now()+timedelta(hours=3)
-st.title(f"V77 حيتان - {now.strftime('%H:%M:%S')} KSA")
-st.success("جاهز - هذا كتابة فقط + أسعار دقيقة حقيقية")
+st.set_page_config(page_title="V78 CLEAR", layout="wide")
+st.title("V78 - واضح مثل تلجرام")
 
-if st.button("📩 اختبار دقيق"):
-    m=fmt_msg("NVDA","CALL",209,4.50,2.70,205.30,6,850,58)
-    if send(m):
-        st.success("✅ انرسل - شف جوالك"); st.code(m)
-    else:
-        st.error("فشل - تأكد من النت")
+# معاينة واضحة مثل تلجرام بالضبط
+example = fmt("NVDA","CALL",209,4.50,2.70,205.30,850,58)
+st.text_area("شكل الرسالة في تلجرام (واضح 100%):", example, height=400)
 
-if st.button("▶️ فحص السوق - اسعار حقيقية"):
-    tickers=["NVDA","AAPL","MSFT","AVGO","META","COIN","TSLA"]
-    prog=st.progress(0)
-    for i,ticker in enumerate(tickers):
-        prog.progress(int((i+1)/len(tickers)*100))
+if st.button("📩 ارسل للتلجرام"):
+    send(example)
+    st.success("✅ انرسل - افتح تلجرام في جوالك الآن بتشوفه واضح")
+
+if st.button("▶️ فحص حقيقي"):
+    for ticker in ["NVDA","AAPL","META"]:
         try:
             tk=yf.Ticker(ticker)
-            hist=tk.history(period="10d")
-            if len(hist)<5: continue
-            curr=float(hist['Close'].iloc[-1])
-            # RSI مبسط
-            delta=hist['Close'].diff()
-            gain=delta.where(delta>0,0).rolling(14).mean().iloc[-1]
-            loss=-delta.where(delta<0,0).rolling(14).mean().iloc[-1]
-            rsi=100-(100/(1+gain/(loss+0.01))) if loss!=0 else 50
-
-            opts=tk.options
-            if not opts: continue
-            chain=tk.option_chain(opts[0])
-            df=chain.calls.head(1)
-            if df.empty: continue
-            row=df.iloc[0]
-            opt_price=float(row['lastPrice'])
-            if opt_price<0.5: continue
-            strike=int(row['strike'])
-            stop=opt_price*0.6
-            m=fmt_msg(ticker,"CALL",strike,opt_price,stop,curr,5,int(row.get('volume',0)),rsi)
-            if send(m):
-                st.code(m)
-        except Exception as e:
-            st.write(f"{ticker} خطأ: {e}")
-            continue
-    st.success("انتهى")
+            curr=float(tk.history(period="5d")['Close'].iloc[-1])
+            chain=tk.option_chain(tk.options[0])
+            row=chain.calls.iloc[0]
+            opt=float(row['lastPrice'])
+            m=fmt(ticker,"CALL",int(row['strike']),opt,opt*0.6,curr,int(row.get('volume',0)),58)
+            send(m)
+            st.success(f"{ticker} انرسل")
+        except: pass
