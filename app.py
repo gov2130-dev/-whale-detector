@@ -1,125 +1,133 @@
 import streamlit as st, yfinance as yf, time, io, requests
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime, timedelta
-import math
 
 BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
 CHAT_ID="13889370"
 
-def draw_chip(draw, cx, cy):
-    # رسم شريحة هولوجرام 3D مثل AVGO
-    for i in range(8):
-        y = cy - i*4
-        # جسم الشريحة
-        draw.rounded_rectangle([cx-140, y-90, cx+140, y+90], radius=18, outline=(0,255,200), width=2)
-        draw.rectangle([cx-100, y-60, cx+100, y+60], outline=(120,255,255), width=1)
-    # توهج تحت
-    for r in range(60, 20, -5):
-        draw.ellipse([cx-r*2, cy+80-r, cx+r*2, cy+80+r], outline=(0,255,150, r*2), width=2)
+def create_blackgold_card(ticker, o_type, strike, entry, stop, company, score, curr_price, change):
+    W,H = 1080, 1350
+    img = Image.new('RGB', (W,H), (10,10,10))
+    d = ImageDraw.Draw(img)
+    try:
+        f_title = ImageFont.truetype("DejaVuSans-Bold.ttf", 65)
+        f_big = ImageFont.truetype("DejaVuSans-Bold.ttf", 52)
+        f_med = ImageFont.truetype("DejaVuSans.ttf", 36)
+        f_small = ImageFont.truetype("DejaVuSans.ttf", 26)
+        f_tiny = ImageFont.truetype("DejaVuSans.ttf", 22)
+    except:
+        f_title = f_big = f_med = f_small = f_tiny = ImageFont.load_default()
 
-def create_avgo_card(ticker, o_type, strike, entry, stop, company, score):
-    W,H = 1080, 1920
-    img = Image.new('RGB', (W,H), (2,5,15))
-    d = ImageDraw.Draw(img, 'RGBA')
-    f_big = ImageFont.load_default()
-    f_med = ImageFont.load_default()
+    # إطار ذهبي فخم
+    d.rounded_rectangle([12,12,W-12,H-12], radius=32, outline=(212,175,55), width=3)
+    d.rounded_rectangle([20,20,W-20,H-20], radius=29, outline=(60,45,15), width=1)
 
-    # إطار خارجي نيون مثل الصورة الأصلية
-    d.rounded_rectangle([8,8,W-8,H-8], radius=40, outline=(0,200,255), width=5)
-    d.rounded_rectangle([18,18,W-18,H-18], radius=35, outline=(0,255,150), width=1)
-    
-    # هيدر - الأمريكي تحت الفجر + نبض
-    d.rounded_rectangle([25,25,W-25,140], radius=20, outline=(0,255,200), width=2)
-    d.line([(40,80),(100,80),(115,50),(130,110),(145,80),(W-145,80),(W-130,40),(W-115,110),(W-100,80),(W-40,80)], fill=(0,255,150), width=3)
-    d.text((W//2,70), "AL-AMRIKI TAHT AL-FAJR", fill=(150,255,255), anchor="mm", font=f_big)
-    
-    # اسم الشركة BROADCOM STYLE
-    d.text((W//2,200), company, fill=(255,255,255), anchor="mm", font=f_big)
-    d.text((W//2,260), f"{ticker} • 1D", fill=(0,255,150), anchor="mm", font=f_med)
+    # هيدر
+    d.text((W//2, 70), "FAJR HUNTER", fill=(212,175,55), font=f_title, anchor="mm")
+    d.text((W//2, 145), f"{company}", fill=(255,255,255), font=f_big, anchor="mm")
+    d.text((W//2, 200), f"{ticker} ${curr_price:.2f} ({change:+.1f}%)", fill=(140,140,140), font=f_med, anchor="mm")
 
-    # شارت صغير يسار مثل الأصلي
-    d.rounded_rectangle([30,310,310,600], radius=15, outline=(0,255,150), width=2)
-    # رسم شموع صاعدة
-    for i in range(15):
-        x = 50 + i*16
-        h1 = 550 - i*8
-        d.line([(x,h1),(x,h1-40)], fill=(0,255,100), width=3)
-        d.rectangle([x-5,h1-25,x+5,h1-10], fill=(180,255,180))
+    # ENTRY
+    d.rounded_rectangle([35,250,1045,460], radius=22, fill=(18,18,18), outline=(212,175,55), width=2)
+    d.text((70,270), "ENTRY PRICE", fill=(212,175,55), font=f_small)
+    d.text((70,305), f"${entry:.2f}", fill=(255,255,255), font=f_title)
+    d.text((750,315), f"{o_type} {strike}", fill=(0,255,120) if o_type=="CALL" else (255,90,90), font=f_big, anchor="lm")
+    d.text((70,390), f"TYPE: {'REAL MARKET DATA' if score>=5 else 'TEST'} • WEEKLY", fill=(90,90,90), font=f_tiny)
 
-    # الشريحة 3D في الوسط
-    draw_chip(d, 700, 480)
+    # STOP & SCORE صف واحد
+    d.rounded_rectangle([35,475,515,640], radius=20, fill=(18,18,18), outline=(50,50,50), width=1)
+    d.text((70,495), "STOP LOSS", fill=(100,100,100), font=f_small)
+    d.text((70,530), f"${stop:.2f}", fill=(255,70,70), font=f_big)
 
-    # معلومات العقد - نفس مكان الأصلي
-    y0=650
-    d.rounded_rectangle([25,y0,520,y0+420], radius=20, outline=(0,255,200), width=3, fill=(5,20,35,200))
-    d.text((50,y0+15), "CONTRACT INFO", fill=(0,255,150), font=f_med)
-    d.text((50,y0+70), f"TICKER", fill=(150,150,150), font=f_med)
-    d.text((300,y0+70), f"{ticker}", fill=(255,255,255), font=f_med, anchor="lm")
-    d.text((50,y0+130), f"TYPE", fill=(150,150,150), font=f_med)
-    d.text((300,y0+130), f"{o_type}", fill=(0,255,100) if o_type=="CALL" else (255,80,80), font=f_med, anchor="lm")
-    d.text((50,y0+190), f"STRIKE", fill=(150,150,150), font=f_med)
-    d.text((300,y0+190), f"{strike}", fill=(255,255,255), font=f_med, anchor="lm")
-    d.text((50,y0+250), f"EXPIRY", fill=(150,150,150), font=f_med)
-    d.text((300,y0+250), f"WEEKLY", fill=(180,255,180), font=f_med, anchor="lm")
-    d.text((50,y0+310), f"SCORE", fill=(150,150,150), font=f_med)
-    d.text((300,y0+310), f"{score}/7 {'GOLDEN' if score>=6 else 'GOOD'}", fill=(255,215,0), font=f_med, anchor="lm")
+    d.rounded_rectangle([565,475,1045,640], radius=20, fill=(18,18,18), outline=(212,175,55) if score>=6 else (50,50,50), width=2 if score>=6 else 1)
+    d.text((600,495), "SCORE", fill=(100,100,100), font=f_small)
+    d.text((600,530), f"{score}/7", fill=(212,175,55), font=f_big)
+    d.text((770,540), f"{'GOLDEN' if score>=6 else 'GOOD'}", fill=(255,215,0), font=f_med)
 
-    # دخول
-    d.rounded_rectangle([25,y0+450,520,y0+630], radius=20, outline=(0,255,100), width=3, fill=(5,30,20,200))
-    d.text((50,y0+470), "ENTRY", fill=(150,255,150), font=f_med)
-    d.text((50,y0+510), f"${entry:.2f}", fill=(0,255,100), font=f_big)
-    # خط صاعد صغير
-    d.line([(350,580),(400,560),(450,540)], fill=(0,255,100), width=3)
+    # TARGETS
+    d.rounded_rectangle([35,655,1045,1210], radius=22, fill=(18,18,18), outline=(212,175,55), width=2)
+    d.text((70,675), "TARGETS", fill=(212,175,55), font=f_med)
 
-    # وقف
-    d.rounded_rectangle([25,y0+650,520,y0+830], radius=20, outline=(255,50,50), width=3, fill=(30,10,15,200))
-    d.text((50,y0+670), "STOP LOSS", fill=(255,150,150), font=f_med)
-    d.text((50,y0+710), f"${stop:.2f}", fill=(255,60,60), font=f_big)
-    d.line([(350,780),(400,790),(450,800)], fill=(255,60,60), width=3)
-
-    # الأهداف - يمين مثل الأصلي تماما
-    d.rounded_rectangle([550,y0,1055,y0+830], radius=20, outline=(0,220,255), width=3, fill=(5,20,35,200))
-    d.text((580,y0+15), "TARGETS", fill=(0,220,255), font=f_med)
     t1=entry*1.5
-    targets=[t1, t1*1.07, t1*1.15, t1*1.22, t1*1.30, t1*1.40, t1*1.50, t1*1.65, t1*1.80]
-    for i,t in enumerate(targets):
-        yy=y0+80+i*80
-        d.ellipse([580,yy+5,600,yy+25], fill=(0,255,150))
-        d.text((620,yy), f"{i+1}", fill=(0,0,0), font=f_med)
-        d.line([(650,yy+15),(760,yy+15)], fill=(100,255,150), width=2)
-        d.ellipse([760,yy+10,770,yy+20], fill=(150,255,180))
-        d.text((790,yy), f"${t:.2f}", fill=(200,255,255), font=f_med)
-    # سهم كبير و Bars مثل الأصلي
-    d.line([(900, y0+750),(920, y0+300)], fill=(0,255,100), width=6)
-    d.polygon([(920,y0+280),(890,y0+340),(950,y0+340)], fill=(0,255,100))
-    for i in range(7):
-        h = 40 + i*25
-        d.rectangle([860+i*12, y0+800-h, 870+i*12, y0+800], fill=(0,200+i*8,100))
+    targets=[t1, t1*1.15, t1*1.30, t1*1.50, t1*1.80, t1*2.10]
+    percents=[50,72,95,125,170,215]
+    for i in range(6):
+        y=730+i*75
+        d.rounded_rectangle([60,y,1040-40,y+60], radius=12, fill=(28,28,28))
+        d.ellipse([75,y+10,110,y+45], fill=(212,175,55))
+        d.text((92,y+27), f"{i+1}", fill=(0,0,0), font=f_small, anchor="mm")
+        d.text((140,y+12), f"${targets[i]:.2f}", fill=(255,255,255), font=f_med)
+        d.text((900,y+12), f"+{percents[i]}%", fill=(212,175,55), font=f_med, anchor="lm")
 
-    # فوتر
-    d.text((W//2, y0+900), "Not financial advice", fill=(80,80,80), font=f_med, anchor="mm")
-    d.text((W//2, y0+950), "TrkHr Trading", fill=(0,220,255), font=f_big, anchor="mm")
-
-    buf=io.BytesIO(); img.save(buf, format='PNG'); buf.seek(0); return buf, targets
+    d.text((W//2, 1250), "TRKHR • NOT FINANCIAL ADVICE • REAL DATA FROM YFINANCE", fill=(60,60,60), font=f_tiny, anchor="mm")
+    buf=io.BytesIO(); img.save(buf, format='PNG', quality=95); buf.seek(0); return buf, targets
 
 def send_photo(buf, cap):
     try:
         url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        r=requests.post(url, data={'chat_id':CHAT_ID,'caption':cap}, files={'photo':('avgo.png',buf,'image/png')}, timeout=20)
+        r=requests.post(url, data={'chat_id':CHAT_ID,'caption':cap}, files={'photo':('card.png',buf,'image/png')}, timeout=20)
         return r.status_code==200
     except: return False
 
-# باقي كود الفحص V70 نفسه ...
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="V72 BLACK GOLD", layout="wide")
 now=datetime.now()+timedelta(hours=3); s=now.strftime('%H:%M:%S'); h=now.hour
 is_fajer=2<=h<=6
-st.title(f"{s} - V71 AVGO EDITION")
-st.success(f"{s} KSA | V71 FANCY 3D | {'FAJR AUTO ON' if is_fajer else 'WAIT'}")
+st.title(f"🕋 {s} KSA - V72 BLACK GOLD")
+st.info(f"CHAT_ID {CHAT_ID} | {'🔥 FAJR AUTO ON 2-6 AM' if is_fajer else '⏳ WAIT FAJR'} | REAL DATA")
 
-if st.button("📸 اختبار كرت AVGO الفخم"):
-    buf,_=create_avgo_card("COIN","PUT",175,4.30,2.58,"COINBASE",5)
-    if send_photo(buf, "🔔 COIN 175 PUT 5/7\nEntry $4.30 Stop $2.58\nT1 $6.45 (+50%) - AVGO Style"):
-        st.success("✅ انرسل الكرت الفخم - شف تلجرام"); st.image(buf)
+if st.button("📸 اختبار الأسود الذهبي"):
+    buf,_=create_blackgold_card("COIN","PUT",175,4.30,2.58,"COINBASE",5, 412.5, -1.2)
+    if send_photo(buf, "🔔 TEST BLACK GOLD\nCOIN 175 PUT 5/7 GOOD\nEntry $4.30 Stop $2.58\nREAL DATA"):
+        st.success("✅ انرسل - شف تلجرام"); st.image(buf)
     else: st.error("فشل")
 
-# نفس لوب الفحص السابق - يرسل كروت فخمة تلقائي
+if "sent" not in st.session_state: st.session_state.sent=set()
+if "auto" not in st.session_state: st.session_state.auto=False
+
+# فحص حقيقي
+if (not st.session_state.auto) or is_fajer:
+    tickers=["MSFT","NVDA","AAPL","AVGO","HOOD","COIN","MSTR","PLTR","TSLA","META","AMD","GOOGL","AMZN"]
+    prog=st.progress(0); log=st.empty(); found=st.empty()
+    cnt=0
+    for i,ticker in enumerate(tickers):
+        prog.progress(int((i+1)/len(tickers)*100)); log.text(f"يفحص {ticker}... (حقيقي)")
+        try:
+            tk=yf.Ticker(ticker); hist=tk.history(period="20d")
+            if len(hist)<15: continue
+            curr=float(hist['Close'].iloc[-1]); prev=float(hist['Close'].iloc[-2]); ch=float((curr-prev)/prev*100)
+            d=hist['Close'].diff(); g=d.where(d>0,0).ewm(alpha=1/14).mean(); l=(-d.where(d<0,0)).ewm(alpha=1/14).mean()
+            rsi=float(100-(100/(1+float(g.iloc[-1])/(float(l.iloc[-1])+0.01))))
+            trend="BEAR" if rsi>=63 and ch<=-0.3 else "BULL" if rsi<=40 and ch>=0.3 else None
+            if not trend: continue
+            opts=tk.options;
+            if not opts: continue
+            exp=opts[1] if len(opts)>1 else opts[0]
+            chain=tk.option_chain(exp); df=chain.puts if trend=="BEAR" else chain.calls
+            df=df[(df['lastPrice']>=0.4)&(df['lastPrice']<=9)]
+            if df.empty: continue
+            df=df.sort_values('volume', ascending=False).head(3)
+            for _,rw in df.iterrows():
+                vol=int(rw.get('volume',0)or 0)
+                if vol<200: continue
+                bid=float(rw.get('bid',0)or 0); ask=float(rw.get('ask',0)or 0)
+                if bid<=0 or ask<=0: continue
+                if (ask-bid)/((ask+bid)/2)*100>18: continue
+                strike=int(rw['strike']); entry=ask; stop=entry*0.6; total=6 if vol>800 else 5
+                key=f"{ticker}{strike}{trend}{exp}"
+                if key in st.session_state.sent: continue
+                try: comp=tk.info.get('shortName', ticker)[:20]
+                except: comp=ticker
+                buf,tg=create_blackgold_card(ticker, "PUT" if trend=="BEAR" else "CALL", strike, entry, stop, comp, total, curr, ch)
+                emoji="🔥🔥 GOLDEN" if total>=6 else "🔔 GOOD"
+                cap=f"{emoji} {s} REAL\n{ticker} {strike} {'PUT' if trend=='BEAR' else 'CALL'} {total}/7\nPrice ${curr:.2f} ({ch:+.1f}%) Vol {vol}\nEntry ${entry:.2f} Stop ${stop:.2f}\nT1 ${tg[0]:.2f} (+50%)"
+                if send_photo(buf, cap):
+                    st.session_state.sent.add(key); cnt+=1
+                    found.success(f"✅ {ticker} انرسل {total}/7"); st.image(buf)
+                break
+        except Exception as e:
+            continue
+    prog.progress(100); log.empty()
+    st.success(f"انتهى الفحص - انرسل {cnt} عقد حقيقي")
+    st.session_state.auto=True
+    if is_fajer:
+        time.sleep(60); st.session_state.auto=False; st.rerun()
