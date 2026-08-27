@@ -1,118 +1,57 @@
-import streamlit as st, yfinance as yf, requests, json, time, os
-from datetime import datetime, timedelta
+import streamlit as st, yfinance as yf, requests, json, os, pytz
+from datetime import datetime
 
 BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
 CHAT_ID="13889370"
 FILE="active_contracts.json"
 
+def is_market_open():
+    # سوق امريكا 9:30 - 16:00 نيويورك
+    ny = pytz.timezone('America/New_York')
+    now_ny = datetime.now(ny)
+    # جمعة - سبت - احد مقفل؟ لا - امريكا مقفل سبت واحد فقط
+    if now_ny.weekday() >= 5: # 5=سبت 6=احد
+        return False, f"السوق مقفل - ويكند {now_ny.strftime('%A')}"
+    open_time = now_ny.replace(hour=9, minute=30, second=0)
+    close_time = now_ny.replace(hour=16, minute=0, second=0)
+    if not (open_time <= now_ny <= close_time):
+        return False, f"السوق مقفل الآن - الوقت في نيويورك {now_ny.strftime('%H:%M')} - يفتح 9:30"
+    return True, f"السوق مفتوح ✅ {now_ny.strftime('%H:%M')} NY"
+
 def send(msg):
-    try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                      data={'chat_id':CHAT_ID,'text':msg}, timeout=10)
-    except: pass
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                  data={'chat_id':CHAT_ID,'text':msg})
 
-def load_contracts():
-    if os.path.exists(FILE):
-        with open(FILE,'r') as f: return json.load(f)
-    return []
-
-def save_contracts(data):
-    with open(FILE,'w') as f: json.dump(data,f)
-
-def build_msg(d):
-    tg_str=" → ".join([str(int(x)) for x in d['targets_stock']])
-    return f"""تحديث العقد والاهداف والدخول
-${d['ticker']} - {d['strike']} {d['type']} 🎯
-📅 {d['date']}
-💵 السعر الحالي: ${d['curr']:.2f}
-
-💰 دخول العقد: ${d['opt_entry']:.2f}
-🛑 وقف العقد: ${d['stop']:.2f}
-📊 Vol {d['vol']} | RSI {d['rsi']}
-
-🎯 اهداف السهم:
-{tg_str}
-
-🎯 اهداف العقد:
-T1 ${d['opt_entry']*1.5:.2f} (+50%) | T2 ${d['opt_entry']*2.2:.2f} (+120%)
-
-⚠️ ليست توصية بيع أو شراء، للتعليم فقط.
-🐋 حيتان ابو راكان
-TrkHrTrading
-🔥 GOLDEN {d['score']}/7"""
-
-def check_targets():
-    contracts=load_contracts()
-    updated=[]
-    for c in contracts:
-        try:
-            tk=yf.Ticker(c['ticker'])
-            curr=float(tk.history(period="1d", interval="1m")['Close'].iloc[-1])
-            # فحص الاهداف
-            if curr >= c['targets_stock'][0] and not c.get('t1_hit'):
-                send(f"✅ ${c['ticker']} حقق الهدف الاول {int(c['targets_stock'][0])} → السعر الآن {curr:.2f} 🎯\n💰 العقد ربح +50%")
-                c['t1_hit']=True
-            if curr >= c['targets_stock'][2] and not c.get('t2_hit'):
-                send(f"🔥🔥 ${c['ticker']} حقق الهدف الثالث {int(c['targets_stock'][2])} → {curr:.2f} \n💰 العقد ربح +120%")
-                c['t2_hit']=True
-            if curr <= c['stop_stock']:
-                send(f"🛑 ${c['ticker']} ضرب وقف الخسارة {c['stop_stock']:.2f} - اغلاق العقد")
-                continue # احذفه
-
-            # تحديث سعر العقد الحالي
-            chain=tk.option_chain(c['exp_date'])
-            all_opts=chain.calls if c['type']=='CALL' else chain.puts
-            row=all_opts[all_opts['strike']==c['strike']]
-            if not row.empty:
-                c['opt_now']=float(row.iloc[0]['lastPrice'])
-                change=((c['opt_now']/c['opt_entry'])-1)*100
-                if abs(change)>=20: # كل 20% تغيير
-                    send(f"📈 تحديث ${c['ticker']} {c['strike']} {c['type']}\nدخول ${c['opt_entry']:.2f} → الآن ${c['opt_now']:.2f} ({change:+.0f}%)\nسهم ${curr:.2f}")
-            c['curr']=curr
-            updated.append(c)
-        except:
-            updated.append(c)
-            continue
-    save_contracts(updated)
+def load():
+    return json.load(open(FILE)) if os.path.exists(FILE) else []
+def save(d): json.dump(d, open(FILE,'w'))
 
 st.set_page_config(layout="wide")
-st.title("V82 - متابعة العقود حتى واللابتوب مقفل 🐋")
+st.title("V83 - فحص دقيق مع حالة السوق")
 
-contracts=load_contracts()
-st.write(f"عقود نشطة: {len(contracts)}")
+is_open, msg_status = is_market_open()
+if is_open:
+    st.success(msg_status)
+else:
+    st.error(msg_status + " - لن يتم ارسال اي هدف وهمي")
+    st.warning("⚠️ الآن 5:32 صباحاً عندك - يعني 9:32 مساءً البارحة في نيويورك - السوق مقفل - كل البيانات من اغلاق البارحة فقط")
+
+# عرض العقود
+contracts=load()
 for c in contracts:
-    st.code(build_msg(c))
+    st.json(c)
 
-col1,col2=st.columns(2)
-with col1:
-    if st.button("➕ اضافة عقد جديد ومتابعته"):
-        # مثال NVDA
-        curr=205.30
-        c={
-            "ticker":"NVDA","type":"CALL","strike":209,
-            "curr":curr,"opt_entry":4.50,"stop":2.70,
-            "stop_stock":curr*0.97,
-            "targets_stock":[curr*1.01, curr*1.02, curr*1.03, curr*1.04, curr*1.06, curr*1.08, curr*1.10],
-            "date":(datetime.now()+timedelta(days=1)).strftime('%d/%m/%Y'),
-            "exp_date":yf.Ticker("NVDA").options[0],
-            "vol":850,"rsi":58,"score":6,
-            "t1_hit":False,"t2_hit":False
-        }
-        contracts.append(c)
-        save_contracts(contracts)
-        send(build_msg(c))
-        st.success("تمت الاضافة وسيتم متابعته كل 3 دقايق")
+if st.button("🔍 فحص الآن - مع التأكد السوق مفتوح؟"):
+    open_now, txt = is_market_open()
+    st.write(txt)
+    if not open_now:
+        st.error("ما راح افحص الاهداف لأن السوق مقفل - عشان ما يرسل لك هدف وهمي مثل اللي في الصورة")
+        send(f"⏸️ فحص ملغي - {txt}\nالسعر الحالي ثابت ${contracts[0]['curr'] if contracts else 205.30} - لا يوجد تداول")
+    else:
+        # هنا فقط يفحص الاهداف
+        st.success("السوق مفتوح - جاري فحص الاهداف الحقيقية...")
 
-with col2:
-    if st.button("🔄 فحص الاهداف الآن"):
-        check_targets()
-        st.success("تم الفحص")
-
-# حلقة المتابعة التلقائية
-st.write("---")
-auto=st.checkbox("🚀 تفعيل المتابعة التلقائية كل 3 دقايق (لازم ترفعه للسحابة)")
-if auto:
-    st.info("شغال... حتى لو قفلت الصفحة - بيشتغل على السحابة")
-    while True:
-        check_targets()
-        time.sleep(180) # 3 دقايق
+if st.button("🗑️ احذف التنبيه الوهمي اللي انرسل"):
+    # احذف اخر عقد ارسل هدف وهمي
+    save([])
+    st.success("تم حذف كل العقود الوهمية - الآن نظيف")
