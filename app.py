@@ -14,18 +14,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# SPX و NDX لها رموز خاصة في yfinance
-TICKER_MAP = {
-    "SPX": "^SPX", # S&P 500
-    "NDX": "^NDX", # Nasdaq 100
-    "RUT": "^RUT"
-}
+TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX","RUT":"^RUT"}
 
-WATCHLIST = [
-    "SPX","NDX", # المؤشرات اللي طلبتها
-    "SPY","QQQ","IWM","TQQQ","SQQQ",
-    "NVDA","TSLA","AMD","SMCI","AVGO","ARM","PLTR","META","AAPL","MSFT","GOOGL","AMZN",
-    "MSTR","COIN","HOOD","MARA","APP","RDDT","ASTS","RKLB","SOUN","IONQ"
+# 52 شركة الأصلية + SPX + NDX = 54
+WATCHLIST_54 = [
+    # 1-10 AI & Chips تذبذب عالي
+    "NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META",
+    # 11-18 Crypto & Fintech
+    "MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST",
+    # 19-27 Meme High IV
+    "GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR",
+    # 28-33 Big Tech
+    "AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL",
+    # 34-44 ETFs عالية التذبذب
+    "SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL",
+    # 45-52 Growth سريع
+    "APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","SMCI","INTC","WOLF","TEM",
+    # +2 اللي طلبتها
+    "SPX","NDX"
 ]
 
 def send(msg):
@@ -36,70 +42,46 @@ def load(f): return json.load(open(f)) if os.path.exists(f) else []
 def save(f,d): json.dump(d, open(f,'w'))
 
 def get_price(ticker):
-    real_ticker = TICKER_MAP.get(ticker, ticker)
-    tk=yf.Ticker(real_ticker)
+    real=TICKER_MAP.get(ticker,ticker)
+    tk=yf.Ticker(real)
     try:
         curr=float(tk.fast_info['last_price'])
-        hist=tk.history(period="1d", interval="5m")
+        daily=tk.history(period="10d", interval="1d")
+        intraday=tk.history(period="1d", interval="5m")
     except:
-        hist=tk.history(period="2d", interval="1d")
-        curr=float(hist['Close'].iloc[-1]) if not hist.empty else 0
-        hist_5m=tk.history(period="1d", interval="5m")
-        return curr, hist, hist_5m
-    hist_daily=tk.history(period="10d", interval="1d")
-    return curr, hist_daily, hist
+        daily=tk.history(period="10d", interval="1d")
+        curr=float(daily['Close'].iloc[-1]) if not daily.empty else 0
+        intraday=tk.history(period="1d", interval="5m")
+    return curr, daily, intraday
 
-def is_valid_entry(ticker):
-    """هل العقد لسه صالح وما طارت موجته؟"""
+def is_valid(ticker):
     try:
-        curr, daily, intraday = get_price(ticker)
-        if curr==0 or daily.empty: return False, "ما فيه سعر"
+        curr,daily,intraday=get_price(ticker)
+        if curr==0 or daily.empty: return False, "no data"
+        open_today=float(daily['Open'].iloc[-1])
+        day_chg=(curr/open_today-1)*100
+        if day_chg > 4.2: return False, f"طار {day_chg:.1f}%"
+        if day_chg < -3: return False, f"نازل {day_chg:.1f}%"
+        atr=float((daily['High']-daily['Low']).tail(5).mean())
+        atr_pct=atr/curr*100
+        if atr_pct < 1.2: return False, f"تذبذب {atr_pct:.1f}% ضعيف"
+        vol=float(daily['Volume'].iloc[-1]); avg=float(daily['Volume'].tail(5).mean())
+        if vol < avg*1.1: return False, "فوليوم ضعيف"
+        return True, f"صالح {day_chg:.1f}% ATR {atr_pct:.1f}%"
+    except: return False, "error"
 
-        # 1. لا ترسل اذا السهم طار اكثر من 4% اليوم - موجته انتهت
-        open_today = float(daily['Open'].iloc[-1])
-        day_change = (curr/open_today -1)*100
-        if day_change > 4.5:
-            return False, f"طار {day_change:.1f}% - متأخر"
-
-        # 2. لا ترسل اذا قريب من قمة 10 ايام - بيصحح
-        high_10 = float(daily['High'].tail(10).max())
-        if curr >= high_10*0.99:
-            return False, f"قريب من القمة {high_10:.1f}"
-
-        # 3. لازم يكون عنده مساحة 1.5% على الاقل للهدف
-        low_5m = float(intraday['Low'].min()) if not intraday.empty else curr*0.98
-        distance_from_low = (curr/low_5m -1)*100
-        if distance_from_low > 3.5:
-            return False, f"بعيد عن القاع {distance_from_low:.1f}%"
-
-        # 4. فوليوم اليوم اعلى من المتوسط
-        vol_today = float(daily['Volume'].iloc[-1])
-        avg_vol = float(daily['Volume'].tail(5).mean())
-        if vol_today < avg_vol*1.1:
-            return False, f"فوليوم ضعيف"
-
-        # 5. ATR تذبذب عالي
-        atr = float((daily['High']-daily['Low']).tail(5).mean())
-        atr_pct = atr/curr*100
-        if atr_pct < 1.2: return False, f"تذبذب {atr_pct:.1f}% قليل"
-
-        return True, f"صالح - تغيير اليوم {day_change:.1f}% - ATR {atr_pct:.1f}% - مساحة للصعود"
-
-    except Exception as e:
-        return False, str(e)
-
-def get_contract(ticker, typ="CALL"):
-    real_ticker = TICKER_MAP.get(ticker, ticker)
-    # للاوبشن: SPX و NDX نستخدم SPY و QQQ كبديل لان اوبشن SPX في yfinance ضعيف
+def get_contract_under_4(ticker, typ="CALL"):
+    """يجيب عقد تحت $4 فقط - خفيف وسريع"""
     opt_ticker = "SPY" if ticker=="SPX" else "QQQ" if ticker=="NDX" else ticker
+    real_ticker = TICKER_MAP.get(ticker,ticker)
     try:
+        curr_real,_,_=get_price(ticker)
         tk=yf.Ticker(opt_ticker)
-        curr_real,_,_ = get_price(ticker) # سعر المؤشر الحقيقي
         try: curr_opt=float(tk.fast_info['last_price'])
         except: curr_opt=float(tk.history(period="1d")['Close'].iloc[-1])
 
         ny=pytz.timezone('America/New_York'); today=datetime.now(ny).date()
-        exps=[e for e in tk.options if datetime.strptime(e,"%Y-%m-%d").date()>=today][:2]
+        exps=[e for e in tk.options if datetime.strptime(e,"%Y-%m-%d").date()>=today][:3]
         for exp in exps:
             days=(datetime.strptime(exp,"%Y-%m-%d").date()-today).days
             if not (1 <= days <= 7): continue
@@ -107,9 +89,9 @@ def get_contract(ticker, typ="CALL"):
             opts=chain.calls if typ=="CALL" else chain.puts
             if opts.empty: continue
 
-            # استهداف OTM خفيف 1% فقط - عشان يكون صالح بعد الافتتاح
-            target=curr_opt*1.01 if typ=="CALL" else curr_opt*0.99
-            opts=opts[abs(opts['strike']-target) < curr_opt*0.04]
+            # نبحث عن عقود رخيصة تحت $4 - OTM 2-4%
+            target=curr_opt*1.025 if typ=="CALL" else curr_opt*0.975
+            opts=opts[(opts['strike']>=curr_opt*0.98) & (opts['strike']<=curr_opt*1.06)]
 
             for _, r in opts.sort_values('strike').iterrows():
                 try:
@@ -118,19 +100,19 @@ def get_contract(ticker, typ="CALL"):
                     ask=float(r['ask']) if r['ask'] else 0
                     vol=int(r['volume']) if str(r['volume'])!='nan' else 0
                     oi=int(r['openInterest']) if str(r['openInterest'])!='nan' else 0
-                    if last < 0.9: continue
+
+                    # فلتر تحت $4
+                    if last < 0.6 or last > 4.0: continue
                     if bid==0 or ask==0: continue
-                    if (ask-bid)/last > 0.15: continue
-                    if vol < 200 and oi < 1000: continue
-                    # سعر العقد ما يكون طاير 80% اليوم
-                    if last > float(r['strike'])*0.08: continue
+                    if bid < 0.4: continue
+                    if (ask-bid)/last > 0.18: continue
+                    if vol < 200 and oi < 800: continue
 
                     return {
-                        "ticker":ticker, "opt_ticker":opt_ticker,
-                        "curr":curr_real, "curr_opt":curr_opt,
-                        "exp":exp, "days":days,
-                        "strike":int(r['strike']), "type":typ,
-                        "last":last, "bid":bid, "ask":ask, "vol":vol, "oi":oi
+                        "ticker":ticker,"opt_ticker":opt_ticker,
+                        "curr":curr_real,"curr_opt":curr_opt,
+                        "exp":exp,"days":days,"strike":int(r['strike']),"type":typ,
+                        "last":last,"bid":bid,"ask":ask,"vol":vol,"oi":oi
                     }
                 except: continue
     except: pass
@@ -138,13 +120,13 @@ def get_contract(ticker, typ="CALL"):
 
 def build_msg(c):
     base=c['curr']
-    tg=f"{int(base*1.005)} → {int(base*1.01)} → {int(base*1.02)} → {int(base*1.035)} → {int(base*1.05)}"
+    tg=f"{int(base*1.005)} → {int(base*1.012)} → {int(base*1.022)} → {int(base*1.035)}"
     return f"""${c['ticker']} - {c['strike']} {c['type']} 🎯
-📅 {c['exp']} ({c['days']} يوم) صالح للتنفيذ
+📅 {c['exp']} ({c['days']} يوم) تحت $4 💰
 💵 السعر الحالي: ${c['curr']:.2f}
 
 💰 دخول العقد: ${c['last']:.2f} (Bid ${c['bid']:.2f} / Ask ${c['ask']:.2f})
-🛑 وقف العقد: ${c['last']*0.55:.2f}
+🛑 وقف العقد: ${c['last']*0.5:.2f}
 📊 Vol {c['vol']} | OI {c['oi']}
 
 🎯 اهداف السهم:
@@ -154,74 +136,62 @@ def build_msg(c):
 T1 ${c['last']*1.5:.2f} (+50%) | T2 ${c['last']*2.5:.2f} (+150%)
 
 🐋 حيتان ابو راكان
-🔥 GOLDEN VALID"""
+🔥 GOLDEN UNDER $4"""
 
-st.title(f"V91 VALID ONLY - SPX & NDX + فلتر موجة منتهية")
+st.title(f"V92 - 54 شركة + عقد تحت $4")
 
 sent=load(SENT_FILE)
 active=load(FILE)
 
-col1,col2=st.columns(2)
-with col1:
-    if st.button(f"🔍 فحص {len(WATCHLIST)} سهم - فقط الصالح بعد الافتتاح", type="primary"):
-        for t in WATCHLIST:
-            valid, reason = is_valid_entry(t)
-            if not valid:
-                st.write(f"⏸️ {t}: {reason}")
-                continue
-            c=get_contract(t)
-            if not c:
-                st.write(f"❌ {t} - {reason} - بس ما فيه عقد سيولة")
-                continue
-            key=f"{t}_{c['exp']}_{c['strike']}_{datetime.now().strftime('%Y-%m-%d')}"
-            if key in sent:
-                st.write(f"⏭️ {t} مرسل اليوم")
-                continue
-            msg=build_msg(c)
-            st.markdown(f'<div class="telegram-box">{msg}</div>', unsafe_allow_html=True)
-            st.success(f"✅ {t} {reason}")
-            send(msg)
-            sent.append(key); save(SENT_FILE, sent)
-            active.append({**c, "last_price":c['curr'], "t1_hit":False, "targets_stock":[c['curr']*1.01, c['curr']*1.02]})
-            save(FILE, active)
-            time.sleep(0.5)
+st.write(f"القائمة: {len(WATCHLIST_54)} شركة - {', '.join(WATCHLIST_54[:10])}...")
 
-with col2:
-    if st.button("🗑️ مسح المرسلة"):
-        save(SENT_FILE, []); st.success("تم")
+if st.button(f"🔍 افحص {len(WATCHLIST_54)} شركة - عقد تحت $4 فقط", type="primary"):
+    for t in WATCHLIST_54:
+        valid, reason = is_valid(t)
+        if not valid:
+            st.write(f"⏸️ {t}: {reason}")
+            continue
+        c=get_contract_under_4(t)
+        if not c:
+            st.write(f"❌ {t}: {reason} - ما فيه عقد تحت $4")
+            continue
+        key=f"{t}_{c['exp']}_{c['strike']}_{datetime.now().strftime('%Y-%m-%d')}"
+        if key in sent:
+            st.write(f"⏭️ {t} مرسل اليوم")
+            continue
+        msg=build_msg(c)
+        st.markdown(f'<div class="telegram-box">{msg}</div>', unsafe_allow_html=True)
+        st.success(f"✅ {t} - {reason} - ${c['last']:.2f}")
+        send(msg)
+        sent.append(key); save(SENT_FILE, sent)
+        active.append({**c, "last_price":c['curr'], "t1_hit":False, "targets_stock":[c['curr']*1.01, c['curr']*1.022]})
+        save(FILE, active)
+        time.sleep(0.3)
 
 st.write("---")
-st.subheader("🔄 تحديث تلقائي كل 5 دقايق - بدون تكرار")
-
-auto=st.checkbox("شغل التحديث التلقائي")
+auto=st.checkbox(f"🚀 تحديث تلقائي كل 5 دقايق - {len(WATCHLIST_54)} شركة - بدون تكرار")
 if auto:
     status=st.empty()
     while True:
         now=datetime.now().strftime("%H:%M:%S")
-        status.write(f"⏰ آخر تحديث: {now} - يفحص {len(WATCHLIST)} سهم - المرسلة اليوم: {len(sent)}")
-
-        # 1. تابع العقود المفتوحة وارسل تحديث اذا تحقق هدف
+        status.write(f"⏰ {now} - يفحص 54 شركة - المرسلة اليوم {len(sent)} - فقط عقود تحت $4")
+        # متابعة
         for c in active:
             try:
                 curr,_,_=get_price(c['ticker'])
-                if curr and abs(curr - c.get('last_price',curr))>0.2:
-                    if curr >= c['targets_stock'][0] and not c.get('t1_hit'):
-                        send(f"🔥 تحديث العقد ${c['ticker']}\n✅ تحقق الهدف الأول\nالآن ${curr:.2f}\nالعقد +50%")
-                        c['t1_hit']=True
-                    c['last_price']=curr
+                if curr and curr >= c['targets_stock'][0] and not c.get('t1_hit'):
+                    send(f"🔥 تحديث العقد ${c['ticker']}\n✅ حقق الهدف الأول\nالآن ${curr:.2f}\nالعقد +50%")
+                    c['t1_hit']=True
             except: pass
         save(FILE, active)
-
-        # 2. ابحث عن عقود جديدة فقط - ما يكرر
-        for t in WATCHLIST:
-            valid,_=is_valid_entry(t)
-            if valid:
-                c=get_contract(t)
+        # بحث جديد
+        for t in WATCHLIST_54:
+            v,_=is_valid(t)
+            if v:
+                c=get_contract_under_4(t)
                 if c:
                     key=f"{t}_{c['exp']}_{c['strike']}_{datetime.now().strftime('%Y-%m-%d')}"
                     if key not in sent:
                         send(build_msg(c))
                         sent.append(key); save(SENT_FILE, sent)
-                        status.write(f"🚀 جديد {t} انرسل {now}")
-
-        time.sleep(300) # 5 دقايق بالضبط
+        time.sleep(300)
