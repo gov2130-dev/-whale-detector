@@ -1,4 +1,4 @@
-import streamlit as st, yfinance as yf, requests, json, os, pytz, time
+import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime, timedelta
 
 BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
@@ -7,7 +7,6 @@ FILE="active_contracts.json"
 
 st.set_page_config(layout="wide")
 
-# --- CSS البوكس الواضح للابتوب ---
 st.markdown("""
 <style>
 .telegram-box {
@@ -20,27 +19,14 @@ st.markdown("""
     color: white;
     font-size: 20px;
     line-height: 1.9;
-    font-family: -apple-system, sans-serif;
+    white-space: pre-wrap;
     direction: ltr;
     text-align: left;
-    white-space: pre-wrap;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
 }
-.status-open { background: #00a86b; padding: 10px; border-radius: 10px; color: white; text-align: center; font-size: 18px; }
-.status-closed { background: #d90429; padding: 10px; border-radius: 10px; color: white; text-align: center; font-size: 18px; }
+.live { background: #00a86b; color: white; padding: 8px 15px; border-radius: 20px; font-size: 16px; }
+.stale { background: #555; color: white; padding: 8px 15px; border-radius: 20px; font-size: 16px; }
 </style>
 """, unsafe_allow_html=True)
-
-def is_market_open():
-    ny = pytz.timezone('America/New_York')
-    now_ny = datetime.now(ny)
-    if now_ny.weekday() >= 5:
-        return False, f"مقفل - ويكند {now_ny.strftime('%A')} - نيويورك {now_ny.strftime('%H:%M')}"
-    open_t = now_ny.replace(hour=9, minute=30, second=0)
-    close_t = now_ny.replace(hour=16, minute=0, second=0)
-    if open_t <= now_ny <= close_t:
-        return True, f"مفتوح ✅ نيويورك {now_ny.strftime('%H:%M')} | السعودية {(datetime.now()+timedelta(hours=3)).strftime('%H:%M')}"
-    return False, f"مقفل ⏸️ نيويورك {now_ny.strftime('%H:%M')} - يفتح 9:30 صباحاً ET (4:30 عصراً KSA)"
 
 def send(msg):
     requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -49,12 +35,31 @@ def send(msg):
 def load(): return json.load(open(FILE)) if os.path.exists(FILE) else []
 def save(d): json.dump(d, open(FILE,'w'))
 
+def get_live_price(ticker):
+    # يجيب آخر سعر - حتى لو السوق مقفل يجيب آخر سعر متاح
+    try:
+        tk=yf.Ticker(ticker)
+        # نجرب 1m اول (حي) - اذا فشل نجرب 5m
+        for interval in ["1m","5m","15m"]:
+            try:
+                hist=tk.history(period="1d", interval=interval)
+                if not hist.empty:
+                    curr=float(hist['Close'].iloc[-1])
+                    last_time=hist.index[-1]
+                    # هل البيانات جديدة اليوم؟
+                    is_today = last_time.date() == datetime.now().date()
+                    return curr, last_time, is_today
+            except: continue
+        return None, None, False
+    except:
+        return None, None, False
+
 def build_msg(c):
     tg_str=" → ".join([str(int(x)) for x in c['targets_stock']])
     return f"""تحديث العقد والاهداف والدخول
 ${c['ticker']} - {c['strike']} {c['type']} 🎯
 📅 {c['date']}
-💵 السعر الحالي: ${c['curr']:.2f}
+💵 السعر الحالي: ${c['curr']:.2f} ({c.get('last_update','')})
 
 💰 دخول العقد: ${c['opt_entry']:.2f}
 🛑 وقف العقد: ${c['stop']:.2f}
@@ -71,109 +76,76 @@ T1 ${c['opt_entry']*1.5:.2f} (+50%) | T2 ${c['opt_entry']*2.2:.2f} (+120%)
 TrkHrTrading
 🔥 GOLDEN {c['score']}/7"""
 
-def check_and_update():
-    open_now, status = is_market_open()
-    if not open_now:
-        return False, status, None
-    contracts=load()
-    logs=[]
-    for c in contracts:
-        try:
-            tk=yf.Ticker(c['ticker'])
-            # سعر لحظي حقيقي فقط اذا السوق مفتوح
-            curr=float(tk.history(period="1d", interval="1m")['Close'].iloc[-1])
-            c['curr']=curr
-            # فحص هدف حقيقي
-            if curr >= c['targets_stock'][0] and not c.get('t1_hit'):
-                send(f"✅ ${c['ticker']} حقق الهدف الاول {int(c['targets_stock'][0])} → الآن {curr:.2f}\nالعقد +50% 💰")
-                c['t1_hit']=True
-                logs.append(f"حقق {c['ticker']}")
-            if curr <= c['stop_stock'] and not c.get('stop_hit'):
-                send(f"🛑 ${c['ticker']} ضرب الوقف {c['stop_stock']:.2f}")
-                c['stop_hit']=True
-        except Exception as e:
-            logs.append(str(e))
-    save(contracts)
-    return True, status, contracts
-
-# --- الواجهة ---
-st.title("V84 - متابعة كل 5 دقايق + بوكس واضح")
-
-is_open, status_txt = is_market_open()
-if is_open:
-    st.markdown(f'<div class="status-open">{status_txt} - سيتم التحديث كل 5 دقايق بأسعار حية</div>', unsafe_allow_html=True)
-else:
-    st.markdown(f'<div class="status-closed">{status_txt} - البيانات من الاغلاق فقط - لن يرسل اهداف وهمية</div>', unsafe_allow_html=True)
+st.title("V85 - متابعة ذكية - كل سهم لحاله")
 
 contracts=load()
-if contracts:
-    for c in contracts:
-        st.markdown(f'<div class="telegram-box">{build_msg(c)}</div>', unsafe_allow_html=True)
-else:
-    # مثال افتراضي اذا ما فيه عقود
-    example="""تحديث العقد والاهداف والدخول
-$NVDA - 209 CALL 🎯
-📅 28/08/2026
-💵 السعر الحالي: $205.30
+if not contracts:
+    # افتراضي
+    contracts=[{
+        "ticker":"NVDA","type":"CALL","strike":209,"curr":205.30,
+        "opt_entry":4.50,"stop":2.70,"targets_stock":[207,209,211,213,217,221,225],
+        "date":"28/08/2026","vol":850,"rsi":58,"score":6,
+        "last_price":205.30,"t1_hit":False
+    },
+    {
+        "ticker":"SPX","type":"CALL","strike":6450,"curr":6455.0,
+        "opt_entry":12.0,"stop":7.0,"targets_stock":[6460,6475,6490,6505,6520],
+        "date":"28/08/2026","vol":1200,"rsi":62,"score":6,
+        "last_price":6455.0,"t1_hit":False
+    }]
+    save(contracts)
 
-💰 دخول العقد: $4.50
-🛑 وقف العقد: $2.70
-📊 Vol 850 | RSI 58
-
-🎯 اهداف السهم:
-207 → 209 → 211 → 213 → 217 → 221 → 225
-
-🎯 اهداف العقد:
-T1 $6.75 (+50%) | T2 $9.90 (+120%)
-
-⚠️ ليست توصية بيع أو شراء، للتعليم فقط.
-
-🐋 حيتان ابو راكان
-TrkHrTrading
-🔥 GOLDEN 6/7"""
-    st.markdown(f'<div class="telegram-box">{example}</div>', unsafe_allow_html=True)
-    st.info("هذا مثال - اضغط 'اضافة عقد' تحت عشان تبدأ المتابعة الحقيقية")
-
-col1,col2,col3=st.columns(3)
-with col1:
-    if st.button("➕ اضافة NVDA للمتابعة"):
-        c={
-            "ticker":"NVDA","type":"CALL","strike":209,
-            "curr":205.30,"opt_entry":4.50,"stop":2.70,
-            "stop_stock":200.0,
-            "targets_stock":[207,209,211,213,217,221,225],
-            "date":(datetime.now()+timedelta(days=1)).strftime('%d/%m/%Y'),
-            "vol":850,"rsi":58,"score":6,
-            "t1_hit":False,"stop_hit":False
-        }
-        save([c])
-        send(build_msg(c))
-        st.success("تمت الاضافة - بيتم متابعته كل 5 دقايق")
-        st.rerun()
-with col2:
-    if st.button("🔄 فحص الآن"):
-        ok, txt, data=check_and_update()
-        st.write(txt)
-        if not ok:
-            st.warning("السوق مقفل - ما فحصنا عشان ما نرسل وهمي")
-        else:
-            st.success("تم الفحص - السعر حي")
-            st.rerun()
-with col3:
-    if st.button("🗑️ حذف الكل"):
-        save([])
-        st.rerun()
+# عرض البوكسات مع حالة كل سهم
+for c in contracts:
+    curr, last_time, is_today = get_live_price(c['ticker'])
+    if curr:
+        changed = abs(curr - c.get('last_price', curr)) > 0.01
+        status = f"<span class='live'>LIVE {curr:.2f} - {last_time.strftime('%H:%M:%S')}</span>" if is_today and changed else f"<span class='stale'>اغلاق {curr:.2f}</span>"
+        c['curr']=curr
+        st.markdown(f"{status} ${c['ticker']}", unsafe_allow_html=True)
+    st.markdown(f'<div class="telegram-box">{build_msg(c)}</div>', unsafe_allow_html=True)
 
 st.write("---")
-auto=st.checkbox("🚀 تفعيل التحديث التلقائي كل 5 دقايق (للسحابة)")
+col1,col2=st.columns(2)
+with col1:
+    if st.button("🔄 فحص الآن - يحدث فقط اللي تغير"):
+        logs=st.empty()
+        for c in contracts:
+            curr, last_time, is_today = get_live_price(c['ticker'])
+            if curr is None: continue
+            old=c.get('last_price',0)
+            if abs(curr-old) > 0.05: # تغير فعلي
+                logs.write(f"🔥 {c['ticker']} تغير {old:.2f} → {curr:.2f}")
+                c['curr']=curr
+                c['last_price']=curr
+                c['last_update']=last_time.strftime('%H:%M:%S')
+                send(build_msg(c))
+                # فحص هدف
+                if curr >= c['targets_stock'][0] and not c.get('t1_hit'):
+                    send(f"✅ ${c['ticker']} حقق {c['targets_stock'][0]} - الآن {curr:.2f}")
+                    c['t1_hit']=True
+            else:
+                logs.write(f"⏸️ {c['ticker']} ما تغير {curr:.2f} - ما نرسل")
+        save(contracts)
+        st.success("فحص انتهى - فقط اللي تغيرت بياناته انرسل")
+
+with col2:
+    if st.button("➕ اضافة SPX"):
+        save(contracts)
+        st.rerun()
+
+# تحديث تلقائي كل 5 دقايق - ذكي
+auto=st.checkbox("🚀 تحديث كل 5 دقايق - فقط اذا تغيرت البيانات")
 if auto:
-    st.info("شغال كل 5 دقايق... حتى لو قفلت اللابتوب اذا رفعته على Streamlit Cloud")
     placeholder=st.empty()
     while True:
-        ok, txt, data=check_and_update()
-        with placeholder.container():
-            st.write(f"آخر فحص: {datetime.now().strftime('%H:%M:%S')} - {txt}")
-            if data:
-                for c in data:
-                    st.markdown(f'<div class="telegram-box">{build_msg(c)}</div>', unsafe_allow_html=True)
-        time.sleep(300) # 5 دقايق
+        time.sleep(300)
+        for c in contracts:
+            curr, lt, _ = get_live_price(c['ticker'])
+            if curr and abs(curr - c.get('last_price',curr)) > 0.05:
+                c['curr']=curr
+                c['last_price']=curr
+                send(build_msg(c))
+                with placeholder.container():
+                    st.write(f"{datetime.now().strftime('%H:%M:%S')} - {c['ticker']} تحدث {curr:.2f}")
+        save(contracts)
