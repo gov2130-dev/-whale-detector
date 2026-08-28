@@ -4,37 +4,53 @@ import pytz
 
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
-SENT_FILE="sent_today.json"
-SENT_FILE="sent_today.json"
-SENT_FILE="sent_today.json"
-RIYADH = pytz.timezone('Asia/Riyadh')
-NY = pytz.timezone('America/New_York')
+SENT_FILE = "sent_today.json"
 
-st.set_page_config(layout="wide", page_title="V99.1 AUTO")
+st.set_page_config(page_title="V99.1 AUTO - سلة الحيتان", layout="wide")
 
-TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
-WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
-
-def send(msg):
+def send_telegram(msg):
     try:
-        r=requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
-        return r.status_code==200
-    except: return False
-
-def load(f): return json.load(open(f)) if os.path.exists(f) else []
-def save(f,d): json.dump(d, open(f,'w'))
-
-def get_data(ticker):
-    real=TICKER_MAP.get(ticker,ticker)
-    tk=yf.Ticker(real)
-    try: curr=float(tk.fast_info['last_price'])
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+        r = requests.post(url, data=data, timeout=10)
+        return r.status_code == 200
     except:
-        h=tk.history(period="1d"); curr=float(h['Close'].iloc[-1]) if not h.empty else 0
-    daily=tk.history(period="20d", interval="1d")
-    return curr, daily, tk
+        return False
 
-def is_strong_both(ticker):
+def load_sent():
+    if os.path.exists(SENT_FILE):
+        try:
+            with open(SENT_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_sent(lst):
+    with open(SENT_FILE, "w") as f:
+        json.dump(lst, f)
+
+# --- واجهة الموقع ---
+st.title("🐋 V99.1 AUTO - مراقب سلة اليوم")
+
+if st.button("🔴 اختبار تلجرام"):
+    if send_telegram("✅ اختبار ناجح - البوت شغال لحظي الآن!"):
+        st.success("نجح ✅ - راحت الرسالة للتلجرام")
+    else:
+        st.error("فشل - تأكد من BOT_TOKEN و CHAT_ID في Secrets")
+
+st.divider()
+
+# هنا تحط باقي كود فحص العملات اللي كان عندك
+# مثال بسيط:
+coins = ["BTC-USD", "ETH-USD", "SOL-USD"]
+for coin in coins:
     try:
+        data = yf.download(coin, period="1d", interval="1m", progress=False)
+        price = float(data['Close'].iloc[-1])
+        st.write(f"🟢 {coin} = ${price:,.2f}")
+    except:
+        st.write(f"⚪ {coin} - جاري التحميل...")    try:
         curr, daily, _ = get_data(ticker)
         if daily.empty or len(daily)<10: return False, "", "no data"
         daily['EMA20']=daily['Close'].ewm(span=20).mean()
