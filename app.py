@@ -1,40 +1,47 @@
-import streamlit as st, yfinance as yf, requests, json, os, time
-from datetime import datetime
-import pytz
-BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
+import requests, time, threading
+BOT_TOKEN="حط_توكنك_الجديد_هنا"
 CHAT_ID="13889370"
-SENT_FILE="sent_today.json"
-RIYADH = pytz.timezone('Asia/Riyadh')
-NY = pytz.timezone('America/New_York')
-st.set_page_config(layout="wide", page_title="V99 SORTED")
-TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
-WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
-def is_market_open():
-    now_ny = datetime.now(NY)
-    if now_ny.weekday() >= 5: return False
-    mins = now_ny.hour*60 + now_ny.minute
-    return 570 <= mins <= 960
-def send(msg):
+
+# تابع سعر السهم لحظيا
+def get_price(symbol):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        r = requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
-        return r.status_code==200
-    except: return False
-def load():
-    if os.path.exists(SENT_FILE): return json.load(open(SENT_FILE))
-    return []
-def save(d): json.dump(d, open(SENT_FILE,'w'))
-def get_data(ticker):
-    real=TICKER_MAP.get(ticker,ticker)
-    tk=yf.Ticker(real)
-    try: curr=float(tk.fast_info['last_price'])
+        # من Yahoo Finance
+        r=requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d", headers={"User-Agent":"Mozilla"}, timeout=5).json()
+        return r['chart']['result'][0]['meta']['regularMarketPrice']
     except:
-        h=tk.history(period="1d")
-        curr=float(h['Close'].iloc[-1]) if not h.empty else 0
-    daily=tk.history(period="20d", interval="1d")
-    return curr, daily, tk
-def is_strong(ticker):
-    try:
+        return None
+
+# ارسال رسالة
+def send(msg):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id":CHAT_ID, "text":msg})
+
+# امر /check
+def check_symbol(symbol):
+    price=get_price(symbol)
+    if not price:
+        send(f"❌ ما قدرت اجيب سعر {symbol}")
+        return
+    send(f"📈 {symbol} سعره الان: ${price}\n\nاذا نزل عن اهداف البوت اللي ارسلناها = الهدف تحقق ✅\nاذا طلع عن الستوب = ضرب ستوب 🔴")
+
+# مراقب رسائل تلجرام
+def listen():
+    offset=0
+    while True:
+        try:
+            r=requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={offset}&timeout=30").json()
+            for u in r.get('result',[]):
+                offset=u['update_id']+1
+                text=u.get('message',{}).get('text','')
+                if text.startswith('/check'):
+                    parts=text.split()
+                    if len(parts)>=2:
+                        check_symbol(parts[1].upper())
+                    else:
+                        send("اكتب: /check NVDL")
+        except:
+            time.sleep(5)
+
+threading.Thread(target=listen, daemon=True).start()    try:
         curr, daily, _ = get_data(ticker)
         if daily.empty or len(daily)<10: return False,"",0,""
         daily['EMA20']=daily['Close'].ewm(span=20).mean()
