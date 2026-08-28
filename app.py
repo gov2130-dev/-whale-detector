@@ -121,8 +121,7 @@ with cB:
     if st.button("🗑️ تصفير"):
         save([]); st.success("تصفر")
 with cC:
-    mins=st.selectbox("تحديث كل", [2][5][10][15], index=1)
-
+    mins=st.selectbox("تحديث كل", [2,5,10,15], index=1)
 tab1, tab2 = st.tabs(["🚀 فلتر العقود 54 - CALL & PUT", "📊 الداشبورد الفخم - مثل الصورة"])
 
 with tab1:
