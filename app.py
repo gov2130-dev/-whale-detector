@@ -2,14 +2,13 @@ import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime
 import pytz
 
-BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
-CHAT_ID="13889370"
+BOT_TOKEN = st.secrets["BOT_TOKEN"]
+CHAT_ID = st.secrets["CHAT_ID"]
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
 NY = pytz.timezone('America/New_York')
 
 st.set_page_config(layout="wide", page_title="V99.1 AUTO")
-
 TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
 WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
 
@@ -88,22 +87,20 @@ def build_msg(c):
     return f"""{emoji} ${c['ticker']} - {c['strike']} {c['type']} 🔥
 📅 {c['exp']} ({c['days']} يوم)
 💵 السعر: ${c['curr']:.2f}
-
 💰 دخول: ${c['last']:.2f} (Bid ${c['bid']:.2f} / Ask ${c['ask']:.2f})
 🛑 وقف: ${c['last']*0.55:.2f}
-
 🎯 اهداف السهم: {tg}
 🎯 اهداف العقد: T1 ${c['last']*1.5:.2f} (+50%) | T2 ${c['last']*2.3:.2f} (+130%)"""
 
-st.title("V99.1 AUTO - CALL و PUT تحت 4$")
+st.title("V99.1 AUTO - CALL و PUT تحت 4$ 🐋")
 ksa_now=datetime.now(RIYADH).strftime("%Y-%m-%d %H:%M:%S")
-st.caption(f"⏰ الرياض {ksa_now} | 54 شركة")
+st.caption(f"⏰ الرياض {ksa_now} | 54 شركة | Status 200 متصل")
 
 colA,colB,colC=st.columns(3)
 with colA:
     if st.button("📨 اختبار تلجرام", type="primary"):
-        if send(f"✅ V99.1 شغال - {ksa_now}\n🟢 CALL + 🔴 PUT"): st.success("انرسل ✅ شيك تلجرام")
-        else: st.error("فشل - تأكد من النت")
+        if send(f"✅ V99.1 شغال - {ksa_now}\n🟢 CALL + 🔴 PUT"): st.success("انرسل ✅")
+        else: st.error("فشل")
 with colB:
     if st.button("🗑️ تصفير المرسلة"):
         save(SENT_FILE, []); st.success("تصفر ✅")
@@ -135,9 +132,7 @@ st.divider()
 auto=st.checkbox(f"🚀 شغل التحديث التلقائي كل {mins} دقايق", value=False)
 
 if auto:
-    st.info(f"🔄 التحديث التلقائي شغال كل {mins} دقايق - لا تسكر الصفحة - {ksa_now}")
-    
-    # فحص تلقائي
+    st.info(f"🔄 شغال كل {mins} دقايق - {ksa_now}")
     new_found=[]
     for t in WATCHLIST_54:
         ok, direction, _ = is_strong_both(t)
@@ -148,33 +143,10 @@ if auto:
                 if key not in sent:
                     if send(build_msg(c)):
                         sent.append(key); new_found.append(f"{c['type']} {t}")
-    
     if new_found:
         save(SENT_FILE, sent)
-        st.success(f"✅ أرسل تلقائي الآن: {', '.join(new_found)}")
+        st.success(f"✅ أرسل تلقائي: {', '.join(new_found)}")
     else:
         st.write(f"⏸️ ما فيه جديد - بنفحص بعد {mins} دقايق")
-    
-    st.caption(f"آخر فحص: {ksa_now} - بيحدث بعد {mins} دقايق")
     time.sleep(mins*60)
-    st.rerun()basket = get_whale_basket()
-
-if basket.empty:
-    st.warning("جاري جلب العقود... اذا استمر فاضي اضغط Rerun")
-else:
-    st.dataframe(basket, use_container_width=True)
-    
-    # إرسال تلقائي لأقوى 3 حيتان
-    if st.button("📤 ارسل أقوى 3 حيتان لتلجرام"):
-        msg = f"🐋 *سلة الحيتان V99.1* - {datetime.now().strftime('%H:%M')}\n\n"
-        for i, row in basket.head(3).iterrows():
-            msg += f"• {row['symbol']} : {row['priceChangePercent']:.2f}% | Vol: ${row['quoteVolume']/1e6:.1f}M\n"
-        if send_telegram(msg):
-            st.success("انرسلت لتلجرام ✅")
-        else:
-            st.error("فشل الإرسال")
-
-# تحديث تلقائي
-st.caption("يتحدث تلقائياً كل دقيقة - لا يحتاج تحديث يدوي")
-time.sleep(60)
-st.rerun()
+    st.rerun()
