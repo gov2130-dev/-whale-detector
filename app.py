@@ -1,9 +1,10 @@
 import streamlit as st, yfinance as yf, requests, json, os
-from datetime import import datetime
+from datetime import datetime
 import pytz
 
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
+SENT_FILE="sent_today.json"
 SENT_FILE="sent_today.json"
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
