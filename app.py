@@ -1,40 +1,23 @@
-import streamlit as st, yfinance as yf, requests, json, os
-from datetime import datetime
-import pytz
+import streamlit as st, requests
 
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
-SENT_FILE = "sent_today.json"
-
-st.set_page_config(page_title="V99.1 AUTO - سلة الحيتان", layout="wide")
 
 def send_telegram(msg):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-        r = requests.post(url, data=data, timeout=10)
-        return r.status_code == 200
-    except:
-        return False
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg}
+    r = requests.post(url, data=data, timeout=10)
+    return r.status_code == 200
 
-def load_sent():
-    if os.path.exists(SENT_FILE):
-        try:
-            with open(SENT_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
+st.title("V99.1 - اختبار البوت")
 
-def save_sent(lst):
-    with open(SENT_FILE, "w") as f:
-        json.dump(lst, f)
+if st.button("اختبار تلجرام"):
+    if send_telegram("اختبار ناجح - البوت شغال لحظي"):
+        st.success("نجح - وصلت الرسالة")
+    else:
+        st.error("فشل - راجع التوكن")
 
-# --- واجهة الموقع ---
-st.title("🐋 V99.1 AUTO - مراقب سلة اليوم")
-
-if st.button("🔴 اختبار تلجرام"):
-    if send_telegram("✅ اختبار ناجح - البوت شغال لحظي الآن!"):
+st.write("اذا ظهر هذا النص فالكود صحيح")    if send_telegram("✅ اختبار ناجح - البوت شغال لحظي الآن!"):
         st.success("نجح ✅ - راحت الرسالة للتلجرام")
     else:
         st.error("فشل - تأكد من BOT_TOKEN و CHAT_ID في Secrets")
