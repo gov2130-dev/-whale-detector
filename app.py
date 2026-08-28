@@ -1,7 +1,7 @@
 import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime
 import pytz
-BOT_TOKEN="8594574378:AAGQLB3p_YmeiDMNKXwNqKRFpXtngASZWD8"
+BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
 CHAT_ID="13889370"
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
