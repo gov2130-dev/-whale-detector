@@ -2,7 +2,6 @@ import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime
 import pytz
 
-# تثبيت: pip install streamlit-autorefresh
 try:
     from streamlit_autorefresh import st_autorefresh
     HAS_REFRESH=True
@@ -11,19 +10,19 @@ except:
 
 BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
 CHAT_ID="13889370"
-FILE="active_contracts.json"
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
 NY = pytz.timezone('America/New_York')
 
-st.set_page_config(layout="wide", page_title="V99 AUTO")
+st.set_page_config(layout="wide", page_title="V99 AUTO CALL PUT")
 
 TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
 WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
 
 def send(msg):
     try:
-        r=requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
+        url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        r=requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
         return r.status_code==200
     except: return False
 
@@ -35,7 +34,8 @@ def get_data(ticker):
     tk=yf.Ticker(real)
     try: curr=float(tk.fast_info['last_price'])
     except:
-        h=tk.history(period="1d"); curr=float(h['Close'].iloc[-1]) if not h.empty else 0
+        h=tk.history(period="1d")
+        curr=float(h['Close'].iloc[-1]) if not h.empty else 0
     daily=tk.history(period="20d", interval="1d")
     return curr, daily, tk
 
@@ -77,10 +77,14 @@ def get_contract_dir(ticker, direction):
                 opts=opts[(opts['strike']>=curr_opt*0.96) & (opts['strike']<=curr_opt*0.998)].sort_values('strike', ascending=False)
             for _, r in opts.iterrows():
                 try:
-                    last=float(r['lastPrice'] or 0); bid=float(r['bid'] or 0); ask=float(r['ask'] or 0)
-                    vol=int(r['volume'] or 0); oi=int(r['openInterest'] or 0)
+                    last=float(r['lastPrice'] or 0)
+                    bid=float(r['bid'] or 0)
+                    ask=float(r['ask'] or 0)
+                    vol=int(r['volume'] or 0)
+                    oi=int(r['openInterest'] or 0)
                     if not (1.0 <= last <= 4.0): continue
-                    if bid < 0.65 or (ask-bid) > 0.25: continue
+                    if bid < 0.65: continue
+                    if (ask-bid) > 0.25: continue
                     if vol < 200 and oi < 800: continue
                     return {"ticker":ticker,"curr":curr_real,"exp":exp,"days":days,"strike":int(r['strike']),"last":last,"bid":bid,"ask":ask,"type":direction}
                 except: continue
@@ -90,9 +94,11 @@ def get_contract_dir(ticker, direction):
 def build_msg(c):
     base=c['curr']
     if c['type']=="CALL":
-        tg=f"{base*1.01:.1f} → {base*1.025:.1f} → {base*1.04:.1f}"; emoji="🟢"
+        tg=f"{base*1.01:.1f} → {base*1.025:.1f} → {base*1.04:.1f}"
+        emoji="🟢"
     else:
-        tg=f"{base*0.99:.1f} → {base*0.975:.1f} → {base*0.96:.1f}"; emoji="🔴"
+        tg=f"{base*0.99:.1f} → {base*0.975:.1f} → {base*0.96:.1f}"
+        emoji="🔴"
     return f"""{emoji} ${c['ticker']} - {c['strike']} {c['type']} 🔥
 📅 {c['exp']} ({c['days']} يوم)
 💵 السعر: ${c['curr']:.2f}
@@ -103,29 +109,27 @@ def build_msg(c):
 🎯 اهداف السهم: {tg}
 🎯 اهداف العقد: T1 ${c['last']*1.5:.2f} (+50%) | T2 ${c['last']*2.3:.2f} (+130%)"""
 
-# ===== الواجهة =====
-st.title("V99 - تحديث تلقائي AUTO - CALL + PUT")
+st.title("V99 AUTO - CALL و PUT تحت $4")
 ksa_now=datetime.now(RIYADH).strftime("%Y-%m-%d %H:%M:%S")
-ny_now=datetime.now(NY).strftime("%H:%M:%S")
-st.caption(f"⏰ الرياض {ksa_now} | نيويورك {ny_now} | 54 شركة")
+st.caption(f"⏰ الرياض {ksa_now} | 54 شركة | CALL+PUT")
 
 colA,colB,colC,colD=st.columns(4)
 with colA:
-    if st.button("📨 اختبار تلجرام"):
-        if send(f"✅ V99 AUTO شغال - {ksa_now}\n🟢 CALL + 🔴 PUT + تحديث تلقائي"): st.success("انرسل")
+    if st.button("📨 اختبار تلجرام", type="primary"):
+        if send(f"✅ V99 شغال - {ksa_now}\n🟢 CALL + 🔴 PUT + تحديث تلقائي"): st.success("انرسل تلجرام ✅")
         else: st.error("فشل")
 with colB:
-    if st.button("🗑️ تصفير"):
-        save(SENT_FILE, []); st.success("تصفر")
+    if st.button("🗑️ تصفير المرسلة"):
+        save(SENT_FILE, []); st.success("تصفر ✅")
 with colC:
-    mins=st.selectbox("كل كم دقيقة يحدث؟", [2,5,10,15,30], index=1)
+    mins=st.selectbox("كل كم دقيقة؟", [2,5,10,15,30], index=1)
 with colD:
     st.metric("المرسلة اليوم", len(load(SENT_FILE)))
 
+st.divider()
 sent=load(SENT_FILE)
 
-# ===== زر فحص يدوي =====
-if st.button(f"🔍 افحص الآن 54 - CALL + PUT", type="primary"):
+if st.button(f"🔍 افحص الآن 54", type="primary"):
     call_c=0; put_c=0
     prog=st.progress(0)
     for i,t in enumerate(WATCHLIST_54):
@@ -141,20 +145,19 @@ if st.button(f"🔍 افحص الآن 54 - CALL + PUT", type="primary"):
                         if c['type']=="CALL": call_c+=1
                         else: put_c+=1
                         sent.append(key); save(SENT_FILE, sent)
+                        st.success(f"✅ {t} {direction}")
         prog.progress((i+1)/len(WATCHLIST_54))
-    st.success(f"تم: 🟢 CALL {call_c} | 🔴 PUT {put_c} | الرياض {ksa_now}")
+        time.sleep(0.1)
+    st.balloons()
+    st.info(f"تم: 🟢 CALL {call_c} | 🔴 PUT {put_c}")
 
 st.divider()
-
-# ===== التحديث التلقائي الجديد =====
-auto=st.checkbox(f"🚀 شغل التحديث التلقائي كل {mins} دقايق - حتى لو قفلت الصفحة يحدث لحاله", value=False)
+auto=st.checkbox(f"🚀 شغل التحديث التلقائي كل {mins} دقايق", value=False)
 
 if auto:
     if HAS_REFRESH:
-        st_autorefresh(interval=mins*60*1000, key="auto_refresh_v99")
-        st.info(f"🔄 التحديث التلقائي شغال كل {mins} دقايق - الصفحة بتحدث لحالها - {ksa_now}")
-        
-        # يفحص ويرسل تلقائي مع كل تحديث
+        st_autorefresh(interval=mins*60*1000, key="v99_auto")
+        st.info(f"🔄 التحديث شغال كل {mins} دقايق - {ksa_now}")
         new_found=[]
         for t in WATCHLIST_54:
             ok, direction, _ = is_strong_both(t)
@@ -163,23 +166,13 @@ if auto:
                 if c:
                     key=f"{t}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
                     if key not in sent:
-                        send(build_msg(c))
-                        sent.append(key)
-                        new_found.append(f"{c['type']} {t} {c['strike']}")
-        
+                        if send(build_msg(c)):
+                            sent.append(key)
+                            new_found.append(f"{c['type']} {t}")
         if new_found:
             save(SENT_FILE, sent)
             st.success(f"✅ أرسل تلقائي: {', '.join(new_found)}")
         else:
-            st.write(f"⏸️ ما فيه عقود جديدة - {ksa_now} - بنفحص بعد {mins} دقايق")
-        
-        st.caption(f"آخر فحص: {ksa_now} | المرسلة: {len(sent)}")
+            st.write(f"⏸️ ما فيه جديد - بنفحص بعد {mins} دقايق - {ksa_now}")
     else:
-        st.warning("ركب المكتبة: pip install streamlit-autorefresh")
-        # fallback للطريقة القديمة
-        status=st.empty()
-        while True:
-            ksa = datetime.now(RIYADH).strftime("%H:%M:%S")
-            status.write(f"⏰ {ksa} - يفحص")
-            time.sleep(mins*60)
-            st.rerun()
+        st.error("سوي: pip install streamlit-autorefresh")
