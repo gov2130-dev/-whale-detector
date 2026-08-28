@@ -1,102 +1,160 @@
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-import plotly.graph_objects as go
+import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime
-import requests
+import pytz
 
-st.set_page_config(layout="wide", page_title="KASHF V100 ULTIMATE")
+BOT_TOKEN="8594574378:AAEqZ3fbmEDrnnwgwW3yJIwH0kYNIneY9HY"
+CHAT_ID="13889370"
+SENT_FILE="sent_today.json"
+RIYADH = pytz.timezone('Asia/Riyadh')
+NY = pytz.timezone('America/New_York')
 
-st.markdown("""
-<style>
-.stApp{background:#050a14} 
-h1{color:#00e5ff;text-align:center;text-shadow:0 0 20px #00e5ff; font-size:1.8rem}
-.box{background:#0a1326;border:1px solid #00e5ff55;border-radius:10px;padding:12px}
-.box-orange{background:#1a140a;border:1px solid #ff8c0055;border-radius:10px;padding:12px}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(layout="wide", page_title="V99.1 AUTO")
 
-st.markdown("<h1>STOCHASTIC RSI v100 HOLY TRINITY & MTF MATRIX - KASHF ULTIMATE</h1>", unsafe_allow_html=True)
+TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
+WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
 
-BOT_TOKEN = "ضع_توكن_البوت_هنا"
-CHAT_ID = "ضع_الايدي_هنا"
-STOCKS = ["2222.SR","1120.SR","1180.SR","1211.SR","2010.SR","2380.SR","2030.SR","2350.SR","7010.SR","1210.SR","1060.SR","1050.SR","AAPL","NVDA"]
-
-@st.cache_data(ttl=180)
-def get_data(sym):
+def send(msg):
     try:
-        df = yf.Ticker(sym).history(period="6mo", interval="1d", auto_adjust=True)
-        if df.empty or len(df)<20:
-            return None
-        delta = df['Close'].diff()
-        gain = delta.where(delta>0,0).rolling(14).mean()
-        loss = -delta.where(delta<0,0).rolling(14).mean()
-        rs = gain / loss.replace(0,0.0001)
-        rsi = 100 - (100/(1+rs))
-        rsi_min = rsi.rolling(14).min()
-        rsi_max = rsi.rolling(14).max()
-        stoch = (rsi - rsi_min)/(rsi_max - rsi_min).replace(0,0.0001)*100
-        df['K']=stoch.rolling(3).mean()
-        df['D']=df['K'].rolling(3).mean()
-        df['RSI']=rsi
-        df['Z']=(df['Close']-df['Close'].rolling(50).mean())/df['Close'].rolling(50).std()
-        df['MA20']=df['Close'].rolling(20).mean()
-        return df.dropna()
+        r=requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
+        return r.status_code==200
+    except: return False
+
+def load(f): return json.load(open(f)) if os.path.exists(f) else []
+def save(f,d): json.dump(d, open(f,'w'))
+
+def get_data(ticker):
+    real=TICKER_MAP.get(ticker,ticker)
+    tk=yf.Ticker(real)
+    try: curr=float(tk.fast_info['last_price'])
     except:
-        return None
+        h=tk.history(period="1d"); curr=float(h['Close'].iloc[-1]) if not h.empty else 0
+    daily=tk.history(period="20d", interval="1d")
+    return curr, daily, tk
 
-def analyze(sym, df):
-    k=float(df['K'].iloc[-1]); d=float(df['D'].iloc[-1]); rsi=float(df['RSI'].iloc[-1]); z=float(df['Z'].iloc[-1]); close=float(df['Close'].iloc[-1]); ma20=float(df['MA20'].iloc[-1])
-    prob=50
-    if k<20: prob+=20
-    if k>d: prob+=15
-    if rsi<40: prob+=10
-    if close>ma20: prob+=5
-    if abs(z)>1.5: prob+=10
-    prob=min(95,prob)
-    power=int(min(99, prob*0.9 + abs(z)*3))
-    jackpot = power>=85 and prob>=70 and k>d
-    return {"symbol":sym,"close":close,"k":k,"d":d,"rsi":rsi,"z":z,"prob":prob,"power":power,"jackpot":jackpot}
+def is_strong_both(ticker):
+    try:
+        curr, daily, _ = get_data(ticker)
+        if daily.empty or len(daily)<10: return False, "", "no data"
+        daily['EMA20']=daily['Close'].ewm(span=20).mean()
+        ema20=float(daily['EMA20'].iloc[-1])
+        open_t=float(daily['Open'].iloc[-1])
+        chg=(curr/open_t-1)*100
+        high_t=float(daily['High'].iloc[-1])
+        low_t=float(daily['Low'].iloc[-1])
+        if curr > ema20*0.998 and curr >= high_t*0.987 and chg > -0.8:
+            return True, "CALL", f"CALL {chg:.1f}%"
+        elif curr < ema20*1.002 and curr <= low_t*1.013 and chg < 0.8:
+            return True, "PUT", f"PUT {chg:.1f}%"
+        else:
+            return False, "", f"حيادي {chg:.1f}%"
+    except: return False, "", "error"
 
-tab1, tab2 = st.tabs(["🚀 جدول التوصيات والعقود", "📊 التحليل الفخم"])
+def get_contract_dir(ticker, direction):
+    opt_ticker = "SPY" if ticker=="SPX" else "QQQ" if ticker=="NDX" else ticker
+    try:
+        curr_real,_,tk = get_data(ticker)
+        try: curr_opt=float(tk.fast_info['last_price'])
+        except: curr_opt=curr_real
+        today=datetime.now(NY).date()
+        exps=[e for e in tk.options if datetime.strptime(e,"%Y-%m-%d").date()>=today][:3]
+        for exp in exps:
+            days=(datetime.strptime(exp,"%Y-%m-%d").date()-today).days
+            if not (1 <= days <= 10): continue
+            chain=tk.option_chain(exp)
+            opts = chain.calls if direction=="CALL" else chain.puts
+            if opts.empty: continue
+            if direction=="CALL":
+                opts=opts[(opts['strike']>=curr_opt*1.002) & (opts['strike']<=curr_opt*1.04)].sort_values('strike')
+            else:
+                opts=opts[(opts['strike']>=curr_opt*0.96) & (opts['strike']<=curr_opt*0.998)].sort_values('strike', ascending=False)
+            for _, r in opts.iterrows():
+                try:
+                    last=float(r['lastPrice'] or 0); bid=float(r['bid'] or 0); ask=float(r['ask'] or 0)
+                    vol=int(r['volume'] or 0); oi=int(r['openInterest'] or 0)
+                    if not (1.0 <= last <= 4.0): continue
+                    if bid < 0.65 or (ask-bid) > 0.25: continue
+                    if vol < 200 and oi < 800: continue
+                    return {"ticker":ticker,"curr":curr_real,"exp":exp,"days":days,"strike":int(r['strike']),"last":last,"bid":bid,"ask":ask,"type":direction}
+                except: continue
+    except: pass
+    return None
 
-with tab1:
-    st.markdown("### 🔍 فحص السوق - كل الأسهم")
-    if st.button("🔄 فحص الآن"):
-        st.cache_data.clear()
-    results=[]
-    prog=st.progress(0)
-    for i,sym in enumerate(STOCKS):
-        df=get_data(sym)
-        if df is not None:
-            results.append(analyze(sym,df))
-        prog.progress((i+1)/len(STOCKS))
-    if results:
-        df_res=pd.DataFrame(results).sort_values("power", ascending=False)
-        st.dataframe(df_res, use_container_width=True)
-        jacks = df_res[df_res["jackpot"]==True]
-        if not jacks.empty:
-            st.success(f"🔥 يوجد {len(jacks)} Jackpot!")
-            st.balloons()
+def build_msg(c):
+    base=c['curr']
+    if c['type']=="CALL":
+        tg=f"{base*1.01:.1f} → {base*1.025:.1f} → {base*1.04:.1f}"; emoji="🟢"
     else:
-        st.warning("جاري جلب البيانات... انتظر 20 ثانية وحدث الصفحة")
+        tg=f"{base*0.99:.1f} → {base*0.975:.1f} → {base*0.96:.1f}"; emoji="🔴"
+    return f"""{emoji} ${c['ticker']} - {c['strike']} {c['type']} 🔥
+📅 {c['exp']} ({c['days']} يوم)
+💵 السعر: ${c['curr']:.2f}
 
-with tab2:
-    symbol = st.selectbox("اختر سهم", STOCKS)
-    df = get_data(symbol)
-    if df is not None:
-        info = analyze(symbol, df)
-        c1,c2,c3 = st.columns([1,2,1])
-        with c1:
-            st.markdown(f"<div class='box'><h3>KNN {info['prob']:.0f}%</h3>Power {info['power']}%<br>Z {info['z']:.2f}</div>", unsafe_allow_html=True)
-        with c2:
-            fig=go.Figure()
-            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
-            fig.add_hrect(y0=info['close']*1.008, y1=info['close']*1.02, fillcolor="red", opacity=0.2)
-            fig.add_hrect(y0=info['close']*0.97, y1=info['close']*0.985, fillcolor="cyan", opacity=0.2)
-            fig.update_layout(height=400, template="plotly_dark", paper_bgcolor="#0a1326", margin=dict(l=5,r=5,t=20,b=5))
-            st.plotly_chart(fig, use_container_width=True)
-        with c3:
-            st.markdown(f"<div class='box-orange'><h3>JACKPOT {info['power']}%</h3>{'AKTIF' if info['jackpot'] else 'BEKLEMEDE'}</div>", unsafe_allow_html=True)
+💰 دخول: ${c['last']:.2f} (Bid ${c['bid']:.2f} / Ask ${c['ask']:.2f})
+🛑 وقف: ${c['last']*0.55:.2f}
 
-st.caption(f"V100.4 FIXED - {datetime.now().strftime('%H:%M')} - UptimeRobot 24h")
+🎯 اهداف السهم: {tg}
+🎯 اهداف العقد: T1 ${c['last']*1.5:.2f} (+50%) | T2 ${c['last']*2.3:.2f} (+130%)"""
+
+st.title("V99.1 AUTO - CALL و PUT تحت 4$")
+ksa_now=datetime.now(RIYADH).strftime("%Y-%m-%d %H:%M:%S")
+st.caption(f"⏰ الرياض {ksa_now} | 54 شركة")
+
+colA,colB,colC=st.columns(3)
+with colA:
+    if st.button("📨 اختبار تلجرام", type="primary"):
+        if send(f"✅ V99.1 شغال - {ksa_now}\n🟢 CALL + 🔴 PUT"): st.success("انرسل ✅ شيك تلجرام")
+        else: st.error("فشل - تأكد من النت")
+with colB:
+    if st.button("🗑️ تصفير المرسلة"):
+        save(SENT_FILE, []); st.success("تصفر ✅")
+with colC:
+    mins=st.selectbox("كل كم دقيقة يحدث؟", [2,5,10,15,30], index=1)
+
+sent=load(SENT_FILE)
+st.metric("المرسلة اليوم", len(sent))
+
+if st.button(f"🔍 افحص الآن 54", type="primary"):
+    call_c=put_c=0
+    prog=st.progress(0)
+    for i,t in enumerate(WATCHLIST_54):
+        ok, direction, _ = is_strong_both(t)
+        if ok:
+            c=get_contract_dir(t, direction)
+            if c:
+                key=f"{t}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
+                if key not in sent:
+                    st.code(build_msg(c))
+                    if send(build_msg(c)):
+                        if c['type']=="CALL": call_c+=1
+                        else: put_c+=1
+                        sent.append(key); save(SENT_FILE, sent)
+        prog.progress((i+1)/len(WATCHLIST_54))
+    st.success(f"تم: 🟢 CALL {call_c} | 🔴 PUT {put_c}")
+
+st.divider()
+auto=st.checkbox(f"🚀 شغل التحديث التلقائي كل {mins} دقايق", value=False)
+
+if auto:
+    st.info(f"🔄 التحديث التلقائي شغال كل {mins} دقايق - لا تسكر الصفحة - {ksa_now}")
+    
+    # فحص تلقائي
+    new_found=[]
+    for t in WATCHLIST_54:
+        ok, direction, _ = is_strong_both(t)
+        if ok:
+            c=get_contract_dir(t, direction)
+            if c:
+                key=f"{t}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
+                if key not in sent:
+                    if send(build_msg(c)):
+                        sent.append(key); new_found.append(f"{c['type']} {t}")
+    
+    if new_found:
+        save(SENT_FILE, sent)
+        st.success(f"✅ أرسل تلقائي الآن: {', '.join(new_found)}")
+    else:
+        st.write(f"⏸️ ما فيه جديد - بنفحص بعد {mins} دقايق")
+    
+    st.caption(f"آخر فحص: {ksa_now} - بيحدث بعد {mins} دقايق")
+    time.sleep(mins*60)
+    st.rerun()
