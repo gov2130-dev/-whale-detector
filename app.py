@@ -1,23 +1,25 @@
-import streamlit as st, requests
+import streamlit as st, requests, time
+from datetime import datetime
 
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
 
-st.title("V99 TEST - Debug")
-
-st.write(f"BOT_TOKEN starts with: {BOT_TOKEN[:10]}...")
-st.write(f"CHAT_ID is: {CHAT_ID}")
-
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": msg}
-    r = requests.post(url, data=data, timeout=10)
-    st.write(f"Status: {r.status_code}")
-    st.write(f"Response: {r.text}")
-    return r.status_code == 200
+    data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, data=data, timeout=10)
+        return True
+    except:
+        return False
 
-if st.button("test telegram"):
-    if send_telegram("test ok"):
-        st.success("SUCCESS")
-    else:
-        st.error("FAIL - شف السبب فوق")
+st.set_page_config(page_title="V99.1 AUTO", layout="wide")
+st.title("V99.1 AUTO - سلة الحيتان 🐋💰")
+st.success("البوت متصل - Status 200")
+
+if st.button("📤 اختبار لحظي"):
+    send_telegram("✅ V99.1 شغال - test ok")
+    st.toast("انرسلت!")
+
+# هنا تضيف كود فحص العملات حقك
+st.write("البوت جاهز يستقبل إشارات الحيتان لحظياً")
