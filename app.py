@@ -1,84 +1,109 @@
 import streamlit as st, yfinance as yf, pandas as pd, os, requests, math
-from datetime import datetime
+from datetime import datetime, date
 import pytz
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = "13889370"
-def send_tg(t):
-    try:
-        if not BOT_TOKEN: return
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id":CHAT_ID,"text":t,"parse_mode":"Markdown"}, timeout=10)
-    except: pass
+st.set_page_config(layout="wide", page_title="Whale V700 ALL-IN")
+st.title("👑 حوت 54 - V700 شامل (0DTE + BW + Sweep + OI)")
 
-if "--scan" in os.sys.argv:
-    tickers=["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","AVGO"]
-    msgs=[]
-    for t in tickers:
-        try:
-            tk=yf.Ticker(t)
-            if not tk.options: continue
-            for exp in tk.options[:2]:
-                try:
-                    df=tk.option_chain(exp).calls
-                    for _,r in df.iterrows():
-                        oi=r.get('openInterest',0); vol=r.get('volume',0); p=r.get('lastPrice',0)
-                        if oi and vol and oi>vol*1.2 and vol>50 and 0.2<p<25:
-                            msgs.append(f"💎 {t} {int(r['strike'])}C {exp} OI:{int(oi)} V:{int(vol)} ${p}")
-                except: continue
-        except: continue
-    send_tg("👑 V600 فحص:\n\n" + ("\n".join(msgs[:20]) if msgs else "لا يوجد تجميع قوي (ويكند)"))
-    os._exit(0)
+# --- Settings ---
+with st.sidebar:
+    st.header("⚙️ الفلاتر")
+    min_oi = st.slider("💎 اقل OI", 500, 30000, 5000, 500)
+    min_vol = st.slider("📊 اقل Vol", 0, 1000, 0, 10)
+    min_prem = st.slider("💰 اقل بريميوم $ (Sweep)", 0, 200000, 25000, 5000)
+    max_bw = st.slider("📏 اقصى BW% (قرب من السعر)", 1, 15, 6)
+    max_dte = st.slider("⏰ اقصى DTE (0=اليوم)", 0, 14, 7)
+    
+    st.divider()
+    only_0dte = st.checkbox("🔥 0DTE فقط (اليوم)", False)
+    only_sweep = st.checkbox("⚡ Sweep فقط (>25k$)", False)
+    only_gems = st.checkbox("💎 جواهر فقط OI>2xVol + BW<5", True)
+    
+    tickers_sel = st.multiselect("الشركات", ["SPY","QQQ","NVDA","TSLA","AAPL","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","NFLX","AVGO"], default=["SPY","QQQ","NVDA"])
 
-st.set_page_config(layout="wide", page_title="Whale V600")
-st.title("👑 رادار التجميع V600 - حوت 54")
-st.caption("OI > Vol = تجميع حيتان قبل الانفجار")
+# --- Logic ---
+def days_to_exp(exp_str):
+    try: return (datetime.strptime(exp_str, "%Y-%m-%d").date() - date.today()).days
+    except: return 99
 
-min_oi = st.sidebar.slider("💎 اقل OI", 500, 20000, 3000)
-min_vol = st.sidebar.slider("📊 اقل Vol", 10, 500, 30)
-ticker_list = st.sidebar.multiselect("الشركات", ["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","NFLX","AVGO"], default=["NVDA","TSLA","SPY","QQQ","PLTR"])
-
-if st.sidebar.button("🚀 فحص الآن", type="primary"):
-    rows=[]
-    bar=st.progress(0)
-    status=st.empty()
-    for i,t in enumerate(ticker_list):
-        status.write(f"يفحص {t}... {i+1}/{len(ticker_list)}")
-        bar.progress((i+1)/len(ticker_list))
+if st.sidebar.button("🚀 فحص V700 الآن", type="primary", use_container_width=True):
+    rows=[]; bar=st.progress(0); log=st.empty()
+    for i,t in enumerate(tickers_sel):
+        log.write(f"يفحص {t}... {i+1}/{len(tickers_sel)}"); bar.progress((i+1)/len(tickers_sel))
         try:
             tk=yf.Ticker(t)
             hist=tk.history(period="2d")
-            S=float(hist['Close'].iloc[-1]) if not hist.empty else 100
-            if not tk.options: continue
-            for exp in tk.options[:3]:
+            S=float(hist['Close'].iloc[-1]) if not hist.empty else 0
+            if S==0 or not tk.options: continue
+            for exp in tk.options[:4]:
+                dte=days_to_exp(exp)
+                if dte<0 or dte>max_dte: continue
+                if only_0dte and dte!=0: continue
                 try:
-                    calls=tk.option_chain(exp).calls
-                    for _,r in calls.iterrows():
-                        oi=int(r.get('openInterest',0) or 0)
-                        vol=int(r.get('volume',0) or 0)
-                        price=float(r.get('lastPrice',0) or 0)
-                        strike=float(r['strike'])
-                        if oi>=min_oi and vol>=min_vol:
-                            ratio=oi/max(vol,1)
-                            bw=abs(strike-S)/S*100
-                            if ratio>1.2 and bw<10 and price>0.1:
-                                state="💎 جاهز للانفجار" if ratio>2 and bw<5 else "👀 مراقبة"
-                                rows.append({"Ticker":t,"Strike":strike,"Exp":exp,"S":round(S,1),"OI":oi,"Vol":vol,"OI/Vol":round(ratio,1),"Price":price,"BW%":round(bw,1),"حالة":state})
+                    chain=tk.option_chain(exp)
+                    for side_name, df in [("C",chain.calls), ("P",chain.puts)]:
+                        for _,r in df.iterrows():
+                            oi=int(r.get('openInterest',0) or 0)
+                            vol=int(r.get('volume',0) or 0)
+                            last=float(r.get('lastPrice',0) or 0)
+                            strike=float(r['strike'])
+                            if oi<min_oi and vol<min_vol: continue
+                            prem = vol*last*100
+                            if prem < min_prem and only_sweep: continue
+                            if only_sweep and prem < 25000: continue
+                            bw = abs(strike-S)/S*100
+                            if bw>max_bw: continue
+                            ratio = oi/max(vol,1)
+                            is_sweep = prem>=25000 and vol>=50
+                            is_gem = ratio>=2 and bw<=5 and oi>=5000
+                            if only_gems and not is_gem and not is_sweep: continue
+                            
+                            tag=[]
+                            if dte==0: tag.append("🔥0DTE")
+                            if is_sweep: tag.append("⚡SWEEP")
+                            if is_gem: tag.append("💎جوهرة")
+                            if ratio>1.5: tag.append(f"OI/Vol {ratio:.1f}x")
+                            
+                            rows.append({
+                                "T":t, "Side":side_name, "Strike":strike, "S":round(S,1),
+                                "Exp":exp, "DTE":dte, "OI":oi, "Vol":vol, "Price":last,
+                                "Prem $":int(prem), "BW%":round(bw,1), "Tags":" ".join(tag),
+                                "is_gem":is_gem, "is_sweep":is_sweep
+                            })
                 except: continue
         except: continue
-    bar.empty(); status.empty()
+    bar.empty(); log.empty()
+    
     if rows:
-        df=pd.DataFrame(rows).sort_values("OI", ascending=False)
-        st.success(f"✅ لقى {len(df)} عقد - {datetime.now(pytz.timezone('Asia/Riyadh')).strftime('%H:%M:%S')}")
-        st.dataframe(df, use_container_width=True, height=600)
-        if st.button("📤 ارسل لتلجرام"):
-            txt="👑 *V600 جواهر:*\n\n"
-            for _,r in df.head(10).iterrows():
-                txt+=f"{r['Ticker']} {r['Strike']}C OI:{r['OI']} {r['حالة']}\n"
-            send_tg(txt)
-            st.toast("ارسل ✅")
+        df=pd.DataFrame(rows)
+        # ترتيب: جواهر اول + سويب ثاني + بريميوم
+        df = df.sort_values(by=["is_gem","is_sweep","Prem $"], ascending=[False,False,False])
+        
+        st.success(f"✅ لقى {len(df)} عقد - {len(df[df['is_gem']])} جوهرة 💎 + {len(df[df['is_sweep']])} سويب ⚡")
+        
+        # 3 جداول
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            st.subheader("💎 جواهر (تجميع)")
+            st.dataframe(df[df['is_gem']].head(20)[["T","Strike","Exp","OI","Vol","BW%","Tags"]], use_container_width=True)
+        with c2:
+            st.subheader("⚡ سويب (سيولة داخلة)")
+            st.dataframe(df[df['is_sweep']].head(20)[["T","Strike","Prem $","Vol","Price","Tags"]], use_container_width=True)
+        with c3:
+            st.subheader("🔥 0DTE اليوم")
+            st.dataframe(df[df['DTE']==0].head(20)[["T","Strike","S","Price","Vol","Tags"]], use_container_width=True)
+        
+        st.divider()
+        st.subheader("📋 الكل")
+        st.dataframe(df.drop(columns=["is_gem","is_sweep"]), use_container_width=True, height=500)
     else:
-        st.warning("😴 ما لقى تجميع بهذي الفلاتر - نزل OI الى 1000 و Vol الى 20 لأن اليوم ويكند والسوق مقفل")
-        st.info("جرب يوم الاثنين وقت السوق - او خفف الفلاتر")
+        st.warning("ما لقى - نزل OI الى 500 و Prem الى 0 وجرب SPY QQQ بس لأن اليوم ويكند")
 else:
-    st.info("👈 من اليسار اختر الشركات واضغط 🚀 فحص الآن")
-    st.caption("اليوم سبت - السوق مقفل عشان كذا Vol قليل - الفحص الحقيقي الاثنين 4:30 العصر")
+    st.info("👈 من اليسار: اختر الشركات وشغل الفلاتر اللي تبغى واضغط 🚀 فحص V700 الآن")
+    st.markdown("""
+    **وش يسوي V700:**
+    - **💎 جواهر:** OI اكبر من Vol بضعف + قريب من السعر (BW<5%) = حوت مجمع
+    - **⚡ Sweep:** صفقة وحدة كبيرة > $25k دخلت = سيولة ذكية
+    - **🔥 0DTE:** عقود تنتهي اليوم = انفجار سريع للسكالبينج
+    - **📏 BW:** كل ما قل كل ما الانفجار اقرب
+    """)
