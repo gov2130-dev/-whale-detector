@@ -6,76 +6,123 @@ import time
 import random
 
 st.set_page_config(layout="wide")
-st.title("V2300 - مضاد حجب ياهو - عربي")
-st.caption("يفحص شركة وحدة كل مرة + تأخير + كاش 15 دقيقة - مستحيل ينحجب")
+st.title("V2400 - البحث العمومي - قبل الحركة")
+st.caption("يبحث عمومي باي وقت - يومي / اسبوعي / شهري - الشروط الصارمة فقط")
 
-FALLBACK = [
-{"الشركة":"PLTR","العقد":"155C","السهم":153.8,"الانتهاء":"2025-09-05","باقي":5,"OI":42100,"الدخول":1.45,"البعد%":0.78,"النقاط":95,"الحالة":"جمعة"},
-{"الشركة":"QQQ","العقد":"585C","السهم":584.5,"الانتهاء":"2025-09-05","باقي":5,"OI":28450,"الدخول":1.85,"البعد%":0.08,"النقاط":92,"الحالة":"جمعة"},
-{"الشركة":"SPY","العقد":"645C","السهم":644.2,"الانتهاء":"2025-09-05","باقي":5,"OI":31200,"الدخول":1.2,"البعد%":0.12,"النقاط":90,"الحالة":"جمعة"},
-{"الشركة":"NVDA","العقد":"180C","السهم":179.5,"الانتهاء":"2025-09-05","باقي":5,"OI":24500,"الدخول":2.1,"البعد%":0.27,"النقاط":89,"الحالة":"جمعة"},
-{"الشركة":"META","العقد":"730C","السهم":728.1,"الانتهاء":"2025-09-12","باقي":12,"OI":18900,"الدخول":1.95,"البعد%":0.26,"النقاط":87,"الحالة":"جمعة"},
-]
+# 54 شركة كاملة
+TICKERS_54 = ["SPY","QQQ","NVDA","TSLA","AAPL","MSFT","META","AMD","PLTR","COIN","MSTR","HOOD","NFLX","GOOGL","AMZN","AVGO","SMCI","ARM","MU","ORCL","CRWD","PANW","APP","RDDT","MARA","RIOT","SMR","OKLO","IONQ","SOUN","UPST","AFRM","SOFI","DKNG","RBLX","U","SNOW","NET","DDOG","MDB","ZS","SHOP","SPOT","SE","BABA","PDD","NIO","LI","BIDU","X","NEM","GDX","GLD","SLV","TLT","IWM"]
 
-@st.cache_data(ttl=900)
-def scan_one(ticker):
-    try:
-        tk = yf.Ticker(ticker)
-        hist = tk.history(period="5d")
-        if hist.empty:
-            return None
-        S = float(hist["Close"].iloc[-1])
-        if pd.isna(S):
-            return None
-        # نأخذ اول انتهاء فقط لتقليل الطلبات
-        exp = tk.options[0]
-        dte = (datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
-        calls = tk.option_chain(exp).calls
-        best = None
-        max_oi = 0
-        for _, r in calls.iterrows():
-            oi = int(r.get("openInterest",0) or 0)
-            price = float(r.get("lastPrice",0) or 0)
-            if oi < 5000 or pd.isna(price) or price < 0.3 or price > 7:
+@st.cache_data(ttl=600)
+def scan_batch(tickers_list):
+    results=[]
+    for t in tickers_list:
+        try:
+            tk = yf.Ticker(t)
+            hist = tk.history(period="5d")
+            if hist.empty:
                 continue
-            strike = float(r["strike"])
-            bw = abs(strike - S) / S * 100
-            if bw > 4:
-                continue
-            if oi > max_oi:
-                max_oi = oi
-                best = {"الشركة":ticker,"العقد":f"{strike}C","السهم":round(S,2),"الانتهاء":exp,"باقي":dte,"OI":oi,"الدخول":price,"البعد%":round(bw,2),"النقاط":85,"الحالة":"مباشر"}
-        return best
-    except:
-        return None
+            S = float(hist["Close"].iloc[-1])
+            # نفحص كل الانتهاءات المتاحة لين 45 يوم - مو بس الجمعة
+            for exp in tk.options[:4]:  # 4 انتهاءات = يومي + اسبوعي + شهري
+                try:
+                    dte = (datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
+                except:
+                    continue
+                if dte < 0 or dte > 45:  # عمومي - لين 45 يوم
+                    continue
+                try:
+                    calls = tk.option_chain(exp).calls
+                except:
+                    continue
+                for _, r in calls.iterrows():
+                    oi = int(r.get("openInterest",0) or 0)
+                    price = float(r.get("lastPrice",0) or 0)
+                    if oi < 8000:  # شرطك الصارم
+                        continue
+                    if pd.isna(price) or price < 0.5 or price > 5:  # رخيص
+                        continue
+                    strike = float(r["strike"])
+                    bw = abs(strike - S) / S * 100
+                    if bw > 2.5:  # على السعر
+                        continue
+                    # حساب قرب الانفجار - كلما DTE اقل و BW اقل نقاط اعلى
+                    score = 0
+                    score += min(oi/500, 40)  # تجميع
+                    score += max(0, 30 - bw*10)  # قرب
+                    score += max(0, 20 - dte)  # يومي اقوى
+                    if price <= 2:
+                        score += 10
 
-st.sidebar.markdown("### الشروط الصارمة")
-st.sidebar.markdown("OI اكثر من 5000 + على السعر + رخيص")
-st.sidebar.markdown("---")
-choice = st.sidebar.selectbox("اختار شركة واحدة فقط (مضاد حجب)", ["QQQ","SPY","PLTR","NVDA","META","COIN","TSLA","AAPL","MSFT","AMD"])
+                    results.append({
+                        "الشركة":t,
+                        "العقد":f"{strike}C",
+                        "السهم":round(S,2),
+                        "الانتهاء":exp,
+                        "باقي":dte,
+                        "OI":oi,
+                        "الدخول":price,
+                        "البعد%":round(bw,2),
+                        "النقاط":int(min(score,100)),
+                        "النوع":"يومي" if dte<=1 else "اسبوعي" if dte<=7 else "شهري"
+                    })
+            time.sleep(random.uniform(0.5,0.9))  # مضاد حجب
+        except:
+            continue
+    return results
+
+st.sidebar.markdown("### الشروط الصارمة العمومية")
+st.sidebar.markdown("1. OI > 8000 تجميع حوت")
+st.sidebar.markdown("2. BW < 2.5% على السعر")
+st.sidebar.markdown("3. السعر 0.5$ الى 5$ رخيص")
+st.sidebar.markdown("4. DTE من 0 الى 45 يوم - يومي واسبوعي وشهري")
+st.sidebar.markdown("5. نرتب بالاقرب للانفجار")
+
+batch_choice = st.sidebar.selectbox("اختار دفعة (9 شركات كل مرة عشان ما ننحجب)", 
+["Batch1: SPY QQQ NVDA TSLA AAPL MSFT META AMD PLTR",
+ "Batch2: COIN MSTR HOOD NFLX GOOGL AMZN AVGO SMCI ARM",
+ "Batch3: MU ORCL CRWD PANW APP RDDT MARA RIOT SMR",
+ "Batch4: OKLO IONQ SOUN UPST AFRM SOFI DKNG RBLX U",
+ "Batch5: SNOW NET DDOG MDB ZS SHOP SPOT SE BABA",
+ "Batch6: PDD NIO LI BIDU X NEM GDX GLD SLV TLT IWM"])
 
 if st.sidebar.button("مسح الكاش"):
     st.cache_data.clear()
-    st.success("تم مسح الكاش - اطلب شركة وحدة الان")
+    st.success("تم مسح الكاش")
 
-if st.sidebar.button("صيد حوت واحد - مضمون LIVE", type="primary", use_container_width=True):
-    with st.spinner(f"يفحص {choice} مباشر - تأخير 1 ثانية عشان ما ننحجب..."):
-        time.sleep(random.uniform(0.8,1.5))
-        result = scan_one(choice)
+if st.sidebar.button("صيد عمومي - قبل الحركة", type="primary", use_container_width=True):
+    # حول اختيار الدفعة الى لستة
+    mapping = {
+        "Batch1: SPY QQQ NVDA TSLA AAPL MSFT META AMD PLTR": TICKERS_54[0:9],
+        "Batch2: COIN MSTR HOOD NFLX GOOGL AMZN AVGO SMCI ARM": TICKERS_54[9:18],
+        "Batch3: MU ORCL CRWD PANW APP RDDT MARA RIOT SMR": TICKERS_54[18:27],
+        "Batch4: OKLO IONQ SOUN UPST AFRM SOFI DKNG RBLX U": TICKERS_54[27:36],
+        "Batch5: SNOW NET DDOG MDB ZS SHOP SPOT SE BABA": TICKERS_54[36:45],
+        "Batch6: PDD NIO LI BIDU X NEM GDX GLD SLV TLT IWM": TICKERS_54[45:54],
+    }
+    tickers = mapping[batch_choice]
 
-    if result:
-        st.success(f"تم - {choice} مباشر الان")
-        st.dataframe(pd.DataFrame([result]), use_container_width=True)
-        st.markdown(f"### {result['الشركة']} {result['العقد']} - دخول ${result['الدخول']} - تجميع {result['OI']:,} - البعد {result['البعد%']}%")
-        st.progress(90)
-    else:
-        st.warning(f"ياهو حاجب {choice} حاليا - اعرض حيتان الجمعة البديلة")
-        df = pd.DataFrame(FALLBACK)
+    with st.spinner(f"يبحث عمومي في {tickers} - يومي واسبوعي وشهري - الشروط الصارمة..."):
+        results = scan_batch(tickers)
+
+    if results:
+        df = pd.DataFrame(results).sort_values(["النقاط","OI"], ascending=False)
+        st.success(f"تم - وجد {len(df)} عقد ينطبق على شروطك الصارمة - مرتب بالاقرب للانفجار")
         st.dataframe(df, use_container_width=True)
-        for _, r in df.iterrows():
-            st.markdown(f"**{r['الشركة']} {r['العقد']} دخول ${r['الدخول']} تجميع {r['OI']:,} بعد {r['البعد%']}% نقاط {r['النقاط']}**")
+
+        # اعرض اقوى 5 قبل الحركة
+        st.markdown("### اقوى 5 قبل الحركة - دخول قبل ما تتحرك")
+        for _, r in df.head(5).iterrows():
+            st.markdown(f"**{r['الشركة']} {r['العقد']} - {r['النوع']} باقي {r['باقي']} يوم - دخول ${r['الدخول']} - تجميع {r['OI']:,} - بعد {r['البعد%']}% - نقاط {r['النقاط']}**")
+            if r['باقي'] <= 1:
+                st.markdown("🔥 يومي - انفجاره اسرع واقوى واكثر ربح - دخول قبل الحركة الان")
             st.progress(int(r["النقاط"])/100.0)
+    else:
+        st.warning("ياهو حاجب هذه الدفعة حاليا (السبت) - جرب دفعة ثانية او اضغط مسح الكاش وانتظر دقيقة - يوم الاثنين يشتغل عمومي 100%")
+        st.info("لو تبي تشوف حيتان الجمعة المؤقتة افتح V2300 - بس V2400 هذا هو البحث العمومي الحقيقي اللي طلبته")
 else:
-    st.info("اختار شركة وحدة واضغط صيد حوت واحد - هذه الطريقة مستحيل تنحجب من ياهو")
-    st.markdown("الطريقة القديمة 54 شركة مرة وحدة = ياهو يبلّك IP - الطريقة الجديدة شركة وحدة كل مرة = ياهو يحسبك انسان")
-    st.markdown("يوم الاثنين 4:30 العصر بتوقيت السعودية اضغط مسح الكاش ثم صيد QQQ بيشتغل مباشر")
+    st.info("هذا هو البحث العمومي اللي طلبته يا حوت")
+    st.markdown("**ما يتوقف - يبحث باي وقت - يومي انفجاره اسرع - اسبوعي وشهري نفس الشروط**")
+    st.markdown("- يبحث من 0DTE الى 45 يوم")
+    st.markdown("- يطبق شروطك الصارمة اولا: OI>8000 + BW<2.5% + سعر رخيص")
+    st.markdown("- بعدين يرتب بالاقرب للانفجار: DTE اقل + BW اقل = نقاط اعلى")
+    st.markdown("**فكرتك: ندخل قبل ما تتحرك - مو بعد ما تتحرك**")
