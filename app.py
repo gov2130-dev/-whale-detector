@@ -1,7 +1,6 @@
 import streamlit as st, yfinance as yf, requests, json, os, time, random
 from datetime import datetime
 import pytz
-import pandas as pd
 from curl_cffi import requests as c_requests
 
 BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
@@ -9,7 +8,7 @@ CHAT_ID="13889370"
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
 NY = pytz.timezone('America/New_York')
-st.set_page_config(layout="wide", page_title="V111 WEEKEND READY")
+st.set_page_config(layout="wide", page_title="V113 FLEXIBLE FINAL")
 WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
 TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
 
@@ -31,61 +30,56 @@ def load():
     return []
 def save(d): json.dump(d, open(SENT_FILE,'w'))
 
-def find_weekend(ticker):
+def find_flexible(ticker):
     try:
         real=TICKER_MAP.get(ticker,ticker)
         tk=yf.Ticker(real, session=get_session())
         try: curr=float(tk.fast_info['last_price'])
         except:
-            h=tk.history(period="1d")
+            h=tk.history(period="2d")
             curr=float(h['Close'].iloc[-1]) if not h.empty else 0
         if curr==0: return []
         today=datetime.now(NY).date()
         try: exps=[e for e in tk.options if 0 <= (datetime.strptime(e,"%Y-%m-%d").date()-today).days <= 21][:3]
         except: return []
-        candidates=[]
-        market_open = is_market_open()
+        best=[]
         for exp in exps:
             days=(datetime.strptime(exp,"%Y-%m-%d").date()-today).days
             try: chain=tk.option_chain(exp)
             except:
-                time.sleep(1.0)
+                time.sleep(random.uniform(2.0,3.0))
                 continue
             for direction, opts in [("CALL", chain.calls), ("PUT", chain.puts)]:
                 if opts.empty: continue
                 for _, r in opts.iterrows():
                     try:
                         oi=int(r.get('openInterest',0) or 0)
-                        vol=int(r.get('volume',0) or 0)
                         last=float(r.get('lastPrice',0) or 0)
                         bid=float(r.get('bid',0) or 0)
                         ask=float(r.get('ask',0) or 0)
                         if last==0: last=bid
                         if last==0: last=ask*0.85 if ask>0 else 0
                         if last==0: continue
+                        # كلامك بالصوت - من 0.15 الى 4.00
+                        if not (0.15 <= last <= 4.00): continue
+                        # OI 5000 وفوق - تفكير خارج الصندوق
+                        if oi < 5000: continue
                         strike=float(r['strike'])
                         bw=abs(strike-curr)/curr*100
-                        # شروطك الثابتة بأي وقت
-                        if oi < 5000: continue # نزلنا لـ 5000 عشان الويكند
-                        if not (0.4 <= last <= 5.5): continue
-                        if bw > 3.0: continue
-                        if bid==0 or ask==0: continue
-                        spread=(ask-bid)/last if last>0 else 1
-                        if spread > 0.35: continue
-                        # لو السوق مفتوح نطبق شروط الانفجار
-                        if market_open:
-                            if vol < 300: continue
-                            vol_oi = vol/oi if oi>0 else 0
-                            if vol_oi < 0.05: continue
-                        else:
-                            vol_oi = vol/oi if oi>0 else 0
-                        # نقاط قوة
-                        score = oi + vol*2 - bw*100
-                        candidates.append((score, {"ticker":ticker,"curr":curr,"exp":exp,"days":days,"strike":strike,"last":last,"bid":bid,"ask":ask,"vol":vol,"oi":oi,"type":direction,"bw":round(bw,2),"spread":round(spread*100,1),"vol_oi":round(vol_oi,2) if market_open else 0}))
+                        if bw > 3.5: continue
+                        if bid==0 and ask==0: continue
+                        # سبريد مقبول
+                        spread=(ask-bid)/last if last>0 and bid>0 and ask>0 else 0.2
+                        if spread > 0.45: continue
+                        # تمييز الحوت الكبير
+                        tag = "🐋 حوت كبير 8000+" if oi>=8000 else "⚡ بداية حوت 5000+"
+                        score = oi + (4.0-bw)*500 - last*10
+                        if oi>=8000: score+=2000
+                        best.append((score, {"ticker":ticker,"curr":curr,"exp":exp,"days":days,"strike":strike,"last":last,"bid":bid,"vol":int(r.get('volume',0) or 0),"oi":oi,"type":direction,"bw":round(bw,2),"tag":tag}))
                     except: continue
-            time.sleep(0.7)
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        return [c for s,c in candidates[:3]]
+            time.sleep(random.uniform(1.5,2.5))
+        best.sort(key=lambda x: x[0], reverse=True)
+        return [c for s,c in best[:3]]
     except: return []
 
 def build_msg(c):
@@ -93,40 +87,35 @@ def build_msg(c):
     mode="LIVE" if is_market_open() else "PRE"
     if c['type']=="CALL": t1=base*1.01; t2=base*1.025; t3=base*1.04
     else: t1=base*0.99; t2=base*0.975; t3=base*0.96
-    whale=" 🐋" if c['oi']>8000 else ""
-    return f"{emoji} {c['ticker']} {int(c['strike'])} {c['type']} {mode} - {c['type']} BW {c['bw']}%{whale}\nExp: {c['exp']} ({c['days']}d) Stock: ${base:.2f}\nEntry: ${last:.2f} Bid: ${c['bid']:.2f} Vol: {c['vol']} OI: {c['oi']}\nStop: ${last*0.55:.2f}\nTarget Stock: {t1:.1f} > {t2:.1f} > {t3:.1f}\nTarget Contract: ${last*1.5:.2f} (+50%) | ${last*2.3:.2f} (+130%) | ${last*3.2:.2f} (+220%)"
+    return f"{emoji} {c['ticker']} {int(c['strike'])} {c['type']} {mode} - {c['tag']}\nExp: {c['exp']} ({c['days']}d) Stock: ${base:.2f} BW {c['bw']}%\nEntry: ${last:.2f} Bid: ${c['bid']:.2f} Vol: {c['vol']} OI: {c['oi']}\nStop: ${last*0.50:.2f}\nTarget Stock: {t1:.1f} > {t2:.1f} > {t3:.1f}\nTarget Contract: ${last*1.5:.2f} (+50%) | ${last*2.3:.2f} (+130%) | ${last*3.2:.2f} (+220%)"
 
-st.title("V111 - يشتغل بالويكند + نفس الاستايل")
-st.caption(f"الرياض {datetime.now(RIYADH).strftime('%H:%M:%S')} | PRE يعني السوق مقفل Vol=0 - يشيل شرط الحجم")
+st.title("V113 FLEXIBLE - على كلامك بالصوت")
+st.caption(f"الرياض {datetime.now(RIYADH).strftime('%H:%M:%S')} | سعر 0.15-4$ | OI 5000+ و 8000+ مميز | BW 3.5% | بأي وقت")
 col1,col2=st.columns(2)
 with col1:
-    if st.button("📨 اختبار تلجرام"): st.success("✅") if send("✅ V111 شغال") else st.error("فشل")
+    if st.button("📨 اختبار تلجرام"): st.success("✅") if send("✅ V113 FLEXIBLE شغال 0.15-4$") else st.error("فشل")
 with col2:
-    if st.button("🗑️ تصفير المرسلة - مهم جدا"):
-        save([])
-        st.success("تصفر ✅ - الحين بيطلع حتى لو 88 مرسل قبل")
+    if st.button("🗑️ تصفير المرسلة"):
+        save([]); st.success("تصفر ✅")
     st.metric("المرسلة اليوم", len(load()))
 sent=load()
 
-if st.button("🔍 افحص 54 - يشتغل حتى السبت", type="primary"):
+if st.button("🔍 افحص 54 - فكر خارج الصندوق", type="primary"):
     prog=st.progress(0)
     all_found=[]
     for i,t in enumerate(WATCHLIST_54):
-        res=find_weekend(t)
+        res=find_flexible(t)
         if res: all_found.extend(res)
         prog.progress((i+1)/len(WATCHLIST_54))
     if not all_found:
-        st.error("ياهو حاظر IP - سوي Manage App > Reboot وتصفير المرسلة")
+        st.warning("ما فيه حتى OI 5000 - سوي Reboot")
     else:
         all_found.sort(key=lambda x: (-x['oi'], x['bw']))
-        st.success(f"لقي {len(all_found)} عقد - حتى بالويكند")
+        st.success(f"لقي {len(all_found)} عقد - من 0.15$ الى 4$ - 5000+ و 8000+")
         for c in all_found:
             key=f"{c['ticker']}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
             msg=build_msg(c)
             st.code(msg)
-            if key in sent:
-                st.caption("⚠️ مرسل قبل - اضغط تصفير عشان يرسل مرة ثانية")
-            else:
-                if send(msg):
-                    sent.append(key); save(sent)
+            if key not in sent and send(msg):
+                sent.append(key); save(sent)
         st.balloons()
