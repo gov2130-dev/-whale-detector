@@ -1,66 +1,82 @@
 import streamlit as st, yfinance as yf, pandas as pd
 from datetime import date, datetime
-import time
 
 st.set_page_config(layout="wide")
-st.title("👑 V1600 - ضد البلوك - المنطقي")
-st.caption("يفحص شركة واحدة + كاش 10 دقايق عشان ياهو ما يبلّك")
+st.title("👑 V1700 - العودة للأصل - صيد الحيتان قبل الحركة")
+st.caption("نرجع لفكرة الحوت: OI عالي + قريب + رخيص + محشور = قبل الانفجار")
 
 st.sidebar.markdown("""
-### ✅ المنطق:
-**Vol > OI = فلوس جديدة**  
-**BW <2.5% + سعر رخيص + سهم محشور = قبل الصعود**
+### 🎯 شروط الحوت الأصلية (قبل الحركة):
+**1. OI > 12k:** حوت مجمع قديم  
+**2. BW% <2%:** على السعر بالضبط  
+**3. سعر 0.8$ - 4.5$:** لسه رخيص  
+**4. Spread <15%:** يقدر الحوت يدخل  
+**5. سهم محشور <2%:** تجميع قبل الطلعة  
+**6. DTE 4-21 يوم:** وقت للانفجار
 """)
 
-@st.cache_data(ttl=600) # كاش 10 دقايق عشان ما نطلب كثير
-def scan_one(ticker):
+@st.cache_data(ttl=900)
+def whale_scan(ticker):
+    tk=yf.Ticker(ticker)
+    hist=tk.history(period="10d")
+    if hist.empty: return pd.DataFrame(), 0, "ما فيه بيانات"
+    S=float(hist['Close'].iloc[-1])
+    # هل محشور؟
+    rng=(hist['High'].iloc[-5:].max()-hist['Low'].iloc[-5:].min())/S*100
+    
+    rows=[]
     try:
-        tk = yf.Ticker(ticker)
-        hist = tk.history(period="7d")
-        if hist.empty: return None, "ما فيه بيانات"
-        S = float(hist['Close'].iloc[-1])
-        range3 = (hist['High'].iloc[-3:].max() - hist['Low'].iloc[-3:].min())/S*100
-        
-        rows=[]
-        for exp in tk.options[:2]:
-            try:
-                dd = (datetime.strptime(exp, "%Y-%m-%d").date()-date.today()).days
-                if dd<2 or dd>14: continue
-                calls = tk.option_chain(exp).calls
-                for _,r in calls.iterrows():
-                    oi=int(r.get('openInterest',0) or 0)
-                    vol=int(r.get('volume',0) or 0)
-                    price=float(r.get('lastPrice',0) or 0)
-                    strike=float(r['strike'])
-                    bw=abs(strike-S)/S*100
-                    if oi<5000: continue
-                    if price<0.3 or price>5: continue
-                    if bw>2.5: continue
-                    # المنطق: في الويكند نعتمد OI عالي + محشور، في السوق Vol>OI
-                    is_weekend = date.today().weekday()>=5
-                    if is_weekend:
-                        if range3>2.5: continue
-                        score = (25 if oi>15000 else 10) + (25 if bw<1.2 else 10) + (20 if range3<1 else 10)
-                    else:
-                        if vol < oi*0.5: continue
-                        score = 50
-                    if score>=40:
-                        rows.append({"T":ticker,"عقد":f"{strike}C","S":S,"Exp":exp,"DTE":dd,"OI":oi,"Vol":vol,"Price":price,"BW%":round(bw,2),"Range%":round(range3,2),"SCORE":score})
-            except: continue
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df = df.sort_values("SCORE", ascending=False)
-        return df, S
-    except Exception as e:
-        return None, str(e)
+        for exp in tk.options[:3]:
+            dd=(datetime.strptime(exp, "%Y-%m-%d").date()-date.today()).days
+            if dd<4 or dd>21: continue
+            oc=tk.option_chain(exp)
+            for _,r in oc.calls.iterrows():
+                oi=int(r.get('openInterest',0) or 0)
+                if oi<12000: continue
+                strike=float(r['strike']); price=float(r.get('lastPrice',0) or 0)
+                bid=float(r.get('bid',0) or 0); ask=float(r.get('ask',0) or 0)
+                if price<0.8 or price>4.5: continue
+                bw=abs(strike-S)/S*100
+                if bw>2.2: continue
+                spread = (ask-bid)/price*100 if bid>0 and price>0 else 99
+                if spread>15: continue
+                if rng>2.5: continue
 
-# واجهة شركة واحدة
-col1, col2 = st.sidebar.columns(2)
-tickers = ["QQQ","SPY","NVDA","TSLA","META","AAPL","PLTR","COIN"]
-t = col1.selectbox("الشركة", tickers)
-if col2.button("🔄 فك البلوك"):
-    st.cache_data.clear()
-    st.success("تم فك الكاش - جرب الحين")
+                score=0
+                if oi>20000: score+=30
+                elif oi>12000: score+=20
+                if bw<0.8: score+=30
+                elif bw<1.5: score+=20
+                if price<2: score+=20
+                if rng<1.2: score+=20
+
+                if score>=60:
+                    rows.append({"T":ticker,"عقد":f"{strike}C","S":round(S,2),"Exp":exp,"DTE":dd,"OI":oi,"Price":price,"BW%":round(bw,2),"Spread%":round(spread,1),"Range%":round(rng,2),"SCORE":score,"المعنى":f"حوت مجمع {oi:,} عقد + لسه رخيص ${price} + على السعر"})
+    except Exception as e:
+        return pd.DataFrame(), S, str(e)
+    return pd.DataFrame(rows).sort_values("SCORE", ascending=False), S, rng
+
+t = st.sidebar.selectbox("اختار حوت", ["QQQ","SPY","NVDA","TSLA","META","PLTR"], index=0)
+if st.sidebar.button("🚀 فك بلوك"):
+    st.cache_data.clear(); st.success("فكيت الكاش - الحين افحص")
+
+if st.sidebar.button("🎯 صيد الحوت قبل الحركة", type="primary", use_container_width=True):
+    df,S,rng = whale_scan(t)
+    if df.empty:
+        st.warning(f"{t} سعره ${S} محشور {rng:.2f}% - ما فيه حوت مجمع قريب ورخيص اليوم - هذا منطقي - مو كل يوم فيه حوت")
+        st.info("جرب SPY و QQQ - دايم فيها حيتان حتى الويكند")
+    else:
+        st.success(f"🐋 لقيت {len(df)} حوت مجمع من أيام ولسه رخيص - قبل ما يتحرك")
+        for _,r in df.head(6).iterrows():
+            st.markdown(f"### 🐋 {r['T']} {r['عقد']} | سكور {r['SCORE']} | دخول ${r['Price']} | {r['المعنى']}")
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("OI تجميع", f"{r['OI']:,}"); c2.metric("BW قريب", f"{r['BW%']}%"); c3.metric("Spread سيولة", f"{r['Spread%']}%"); c4.metric("محشور", f"{r['Range%']}%")
+            st.progress(r['SCORE']/100)
+            st.divider()
+        st.dataframe(df, use_container_width=True)
+
+else:
+    st.info("👈 هذا هو الأصل يا حوت - اضغط صيد الحوت - شركة واحدة عشان ما ننبلّك - هذا يجيبها قبل ما تتحرك مو بعد")    st.success("تم فك الكاش - جرب الحين")
 
 if st.sidebar.button("🚀 فحص منطقي", type="primary", use_container_width=True):
     with st.spinner(f"يفحص {t} ... 10 ثواني"):
