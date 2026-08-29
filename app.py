@@ -1,64 +1,59 @@
 import streamlit as st, yfinance as yf, pandas as pd
 from datetime import date, datetime
+import random
 
 st.set_page_config(layout="wide")
-st.title("👑 V820 - فحص مباشر + تشخيص")
+st.title("👑 V900 - يشتغل ويكند + سوق حقيقي")
 
 def dte(e):
     try: return (datetime.strptime(e, "%Y-%m-%d").date()-date.today()).days
     except: return 99
 
-t = st.sidebar.selectbox("الشركة", ["SPY","QQQ","NVDA"], index=0)
-st.sidebar.write("اختار شركة وحدة بس عشان yfinance ما يعلق")
+is_weekend = date.today().weekday() >= 5
 
-if st.sidebar.button("🚀 افحص الآن", type="primary", use_container_width=True):
-    st.write(f"جاري فحص {t}...")
-    try:
-        tk = yf.Ticker(t)
-        hist = tk.history(period="5d")
-        if hist.empty:
-            st.error("yfinance ما رجع سعر - جرب بعد دقيقة (بلوك مؤقت)")
-            st.stop()
-        S = float(hist['Close'].iloc[-1])
-        st.success(f"سعر {t} الآن: ${S:.2f} - التاريخ: {date.today()} - DTE اليوم ويكند")
+t = st.sidebar.selectbox("الشركة", ["QQQ","SPY","NVDA","PLTR","TSLA"], index=0)
+mode = st.sidebar.radio("الوضع", ["🔴 حقيقي (يوم الاثنين)", "🟡 ديمو (عشان تشوف الشكل الحين ويكند)"])
 
-        exps = tk.options
-        if not exps:
-            st.error("ما فيه عقود - yfinance معلق في الويكند")
-            st.stop()
+if st.sidebar.button("🚀 افحص", type="primary", use_container_width=True):
+    if is_weekend and "حقيقي" in mode:
+        st.warning(f"اليوم {date.today()} ويكند - OI الحقيقي صفر عند yfinance. اختر وضع 🟡 ديمو عشان تشوف كيف بيكون يوم الاثنين، أو انتظر الاثنين 4:30 العصر.")
+    
+    rows=[]
+    if "ديمو" in mode:
+        # بيانات تجريبية تشبه يوم الاثنين الحقيقي
+        S=585.0 if t=="QQQ" else 645.0
+        for strike in [S-5, S, S+5, S+10]:
+            rows.append({"T":t,"Strike":strike,"S":S,"Exp":"2026-08-31","DTE":2,"OI":random.randint(8000,25000),"Vol":random.randint(200,2000),"Price":round(random.uniform(2,12),2),"BW%":round(abs(strike-S)/S*100,1),"SCORE":random.randint(75,96),"حالة":"💎 جوهرة + ⚡ SWEEP"})
+        st.success("هذا شكل الديمو - يوم الاثنين بيطلع نفسه بس بأرقام حقيقية")
+    else:
+        try:
+            tk=yf.Ticker(t)
+            S=float(tk.history(period="2d")['Close'].iloc[-1])
+            for exp in tk.options[:2]:
+                dd=dte(exp)
+                try:
+                    for _,r in tk.option_chain(exp).calls.iterrows():
+                        oi=int(r.get('openInterest',0) or 0)
+                        if oi>0:
+                            strike=float(r['strike']); bw=abs(strike-S)/S*100
+                            if bw<8:
+                                rows.append({"T":t,"Strike":strike,"S":round(S,2),"Exp":exp,"DTE":dd,"OI":oi,"Vol":int(r.get('volume',0) or 0),"Price":float(r.get('lastPrice',0) or 0),"BW%":round(bw,1),"SCORE":85,"حالة":"حقيقي"})
+                except: continue
+        except Exception as e:
+            st.error(f"yfinance معلق: {e}")
 
-        st.write(f"تواريخ الانتهاء المتاحة: {exps[:5]}")
+    if rows:
+        df=pd.DataFrame(rows).sort_values("OI", ascending=False)
+        for _,r in df.head(6).iterrows():
+            st.markdown(f"### 🔥 {r['T']} {r['Strike']}C | OI {r['OI']:,} | BW {r['BW%']}% | سكور {r['SCORE']}")
+            st.progress(min(r['SCORE']/100,1.0))
+            c1,c2,c3=st.columns(3)
+            c1.metric("OI", f"{r['OI']:,}"); c2.metric("سعر العقد", f"${r['Price']}"); c3.metric("Vol", r['Vol'])
+            st.divider()
+        st.dataframe(df, use_container_width=True)
+    else:
+        if not is_weekend:
+            st.error("ما لقى - جرب QQQ لحاله")
 
-        rows=[]
-        for exp in exps[:2]: # تاريخين بس
-            dd = dte(exp)
-            st.write(f"--- يفحص {exp} (DTE={dd}) ---")
-            try:
-                chain = tk.option_chain(exp)
-                calls = chain.calls
-                st.write(f"لقي {len(calls)} عقد Call في {exp}")
-                # اعرض بدون فلتر اول
-                for _, r in calls.head(30).iterrows():
-                    oi = int(r.get('openInterest',0) or 0)
-                    strike = float(r['strike'])
-                    bw = abs(strike-S)/S*100
-                    if oi>100 and bw<10: # فلتر خفيف جدا
-                        rows.append({"T":t,"Strike":strike,"S":round(S,2),"Exp":exp,"DTE":dd,"OI":oi,"Vol":int(r.get('volume',0) or 0),"Price":float(r.get('lastPrice',0) or 0),"BW%":round(bw,1)})
-            except Exception as e:
-                st.warning(f"ما قدر يقرا {exp}: {e}")
-                continue
-
-        if rows:
-            df = pd.DataFrame(rows).sort_values("OI", ascending=False)
-            st.success(f"✅ لقيت {len(df)} عقد شغال حتى في الويكند")
-            st.dataframe(df.head(25), use_container_width=True)
-
-            best = df.iloc[0]
-            st.markdown(f"## 🔥 أقوى تجميع: {best['T']} {best['Strike']}C OI {best['OI']} BW {best['BW%']}%")
-        else:
-            st.error("لقي العقود بس كلها OI صفر - لأن اليوم السبت. الاثنين بيطلع كل شي")
-
-    except Exception as e:
-        st.error(f"خطأ عام: {e}")
 else:
-    st.info("اضغط افحص الآن - SPY لحاله - هذا الكود يوريك كل شي حتى لو السوق مقفل")
+    st.info("👈 اختار 🟡 ديمو الحين عشان تشوف الشكل - ويوم الاثنين اختار 🔴 حقيقي")
