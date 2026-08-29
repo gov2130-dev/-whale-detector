@@ -1,128 +1,120 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-from datetime import date, datetime
-import time
-import random
-
-st.set_page_config(layout="wide")
-st.title("V2400 - البحث العمومي - قبل الحركة")
-st.caption("يبحث عمومي باي وقت - يومي / اسبوعي / شهري - الشروط الصارمة فقط")
-
-# 54 شركة كاملة
-TICKERS_54 = ["SPY","QQQ","NVDA","TSLA","AAPL","MSFT","META","AMD","PLTR","COIN","MSTR","HOOD","NFLX","GOOGL","AMZN","AVGO","SMCI","ARM","MU","ORCL","CRWD","PANW","APP","RDDT","MARA","RIOT","SMR","OKLO","IONQ","SOUN","UPST","AFRM","SOFI","DKNG","RBLX","U","SNOW","NET","DDOG","MDB","ZS","SHOP","SPOT","SE","BABA","PDD","NIO","LI","BIDU","X","NEM","GDX","GLD","SLV","TLT","IWM"]
-
-@st.cache_data(ttl=600)
-def scan_batch(tickers_list):
-    results=[]
-    for t in tickers_list:
-        try:
-            tk = yf.Ticker(t)
-            hist = tk.history(period="5d")
-            if hist.empty:
-                continue
-            S = float(hist["Close"].iloc[-1])
-            # نفحص كل الانتهاءات المتاحة لين 45 يوم - مو بس الجمعة
-            for exp in tk.options[:4]:  # 4 انتهاءات = يومي + اسبوعي + شهري
+import streamlit as st, yfinance as yf, requests, json, os, time
+from datetime import datetime
+import pytz
+BOT_TOKEN="8594574378:AAGQLB3p_YmeiDMNKXwNqKRFpXtngASZWD8"
+CHAT_ID="13889370"
+SENT_FILE="sent_today.json"
+RIYADH = pytz.timezone('Asia/Riyadh')
+NY = pytz.timezone('America/New_York')
+st.set_page_config(layout="wide", page_title="V99 SORTED")
+TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
+WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
+def is_market_open():
+    now_ny = datetime.now(NY)
+    if now_ny.weekday() >= 5: return False
+    mins = now_ny.hour*60 + now_ny.minute
+    return 570 <= mins <= 960
+def send(msg):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        r = requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
+        return r.status_code==200
+    except: return False
+def load():
+    if os.path.exists(SENT_FILE): return json.load(open(SENT_FILE))
+    return []
+def save(d): json.dump(d, open(SENT_FILE,'w'))
+def get_data(ticker):
+    real=TICKER_MAP.get(ticker,ticker)
+    tk=yf.Ticker(real)
+    try: curr=float(tk.fast_info['last_price'])
+    except:
+        h=tk.history(period="1d")
+        curr=float(h['Close'].iloc[-1]) if not h.empty else 0
+    daily=tk.history(period="20d", interval="1d")
+    return curr, daily, tk
+def is_strong(ticker):
+    try:
+        curr, daily, _ = get_data(ticker)
+        if daily.empty or len(daily)<10: return False,"",0,""
+        daily['EMA20']=daily['Close'].ewm(span=20).mean()
+        ema20=float(daily['EMA20'].iloc[-1])
+        open_t=float(daily['Open'].iloc[-1])
+        chg=(curr/open_t-1)*100
+        high_t=float(daily['High'].iloc[-1])
+        low_t=float(daily['Low'].iloc[-1])
+        if curr > ema20*0.998 and curr >= high_t*0.987 and chg > -0.8: return True, "CALL", chg, f"CALL {chg:+.1f}%"
+        elif curr < ema20*1.002 and curr <= low_t*1.013 and chg < 0.8: return True, "PUT", chg, f"PUT {chg:+.1f}%"
+        else: return False,"",chg,""
+    except: return False,"",0,""
+def get_contract(ticker, direction):
+    market_open = is_market_open()
+    try:
+        curr_real,_,tk = get_data(ticker)
+        today=datetime.now(NY).date()
+        exps=[e for e in tk.options if datetime.strptime(e,"%Y-%m-%d").date()>=today][:4]
+        for exp in exps:
+            days=(datetime.strptime(exp,"%Y-%m-%d").date()-today).days
+            if not (0 <= days <= (10 if market_open else 14)): continue
+            chain=tk.option_chain(exp)
+            opts = chain.calls if direction=="CALL" else chain.puts
+            if opts.empty: continue
+            if direction=="CALL": opts=opts[(opts['strike']>=curr_real*0.98) & (opts['strike']<=curr_real*1.06)].sort_values('strike')
+            else: opts=opts[(opts['strike']>=curr_real*0.94) & (opts['strike']<=curr_real*1.02)].sort_values('strike', ascending=False)
+            for _, r in opts.iterrows():
                 try:
-                    dte = (datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
-                except:
-                    continue
-                if dte < 0 or dte > 45:  # عمومي - لين 45 يوم
-                    continue
-                try:
-                    calls = tk.option_chain(exp).calls
-                except:
-                    continue
-                for _, r in calls.iterrows():
-                    oi = int(r.get("openInterest",0) or 0)
-                    price = float(r.get("lastPrice",0) or 0)
-                    if oi < 8000:  # شرطك الصارم
-                        continue
-                    if pd.isna(price) or price < 0.5 or price > 5:  # رخيص
-                        continue
-                    strike = float(r["strike"])
-                    bw = abs(strike - S) / S * 100
-                    if bw > 2.5:  # على السعر
-                        continue
-                    # حساب قرب الانفجار - كلما DTE اقل و BW اقل نقاط اعلى
-                    score = 0
-                    score += min(oi/500, 40)  # تجميع
-                    score += max(0, 30 - bw*10)  # قرب
-                    score += max(0, 20 - dte)  # يومي اقوى
-                    if price <= 2:
-                        score += 10
-
-                    results.append({
-                        "الشركة":t,
-                        "العقد":f"{strike}C",
-                        "السهم":round(S,2),
-                        "الانتهاء":exp,
-                        "باقي":dte,
-                        "OI":oi,
-                        "الدخول":price,
-                        "البعد%":round(bw,2),
-                        "النقاط":int(min(score,100)),
-                        "النوع":"يومي" if dte<=1 else "اسبوعي" if dte<=7 else "شهري"
-                    })
-            time.sleep(random.uniform(0.5,0.9))  # مضاد حجب
-        except:
-            continue
-    return results
-
-st.sidebar.markdown("### الشروط الصارمة العمومية")
-st.sidebar.markdown("1. OI > 8000 تجميع حوت")
-st.sidebar.markdown("2. BW < 2.5% على السعر")
-st.sidebar.markdown("3. السعر 0.5$ الى 5$ رخيص")
-st.sidebar.markdown("4. DTE من 0 الى 45 يوم - يومي واسبوعي وشهري")
-st.sidebar.markdown("5. نرتب بالاقرب للانفجار")
-
-batch_choice = st.sidebar.selectbox("اختار دفعة (9 شركات كل مرة عشان ما ننحجب)", 
-["Batch1: SPY QQQ NVDA TSLA AAPL MSFT META AMD PLTR",
- "Batch2: COIN MSTR HOOD NFLX GOOGL AMZN AVGO SMCI ARM",
- "Batch3: MU ORCL CRWD PANW APP RDDT MARA RIOT SMR",
- "Batch4: OKLO IONQ SOUN UPST AFRM SOFI DKNG RBLX U",
- "Batch5: SNOW NET DDOG MDB ZS SHOP SPOT SE BABA",
- "Batch6: PDD NIO LI BIDU X NEM GDX GLD SLV TLT IWM"])
-
-if st.sidebar.button("مسح الكاش"):
-    st.cache_data.clear()
-    st.success("تم مسح الكاش")
-
-if st.sidebar.button("صيد عمومي - قبل الحركة", type="primary", use_container_width=True):
-    # حول اختيار الدفعة الى لستة
-    mapping = {
-        "Batch1: SPY QQQ NVDA TSLA AAPL MSFT META AMD PLTR": TICKERS_54[0:9],
-        "Batch2: COIN MSTR HOOD NFLX GOOGL AMZN AVGO SMCI ARM": TICKERS_54[9:18],
-        "Batch3: MU ORCL CRWD PANW APP RDDT MARA RIOT SMR": TICKERS_54[18:27],
-        "Batch4: OKLO IONQ SOUN UPST AFRM SOFI DKNG RBLX U": TICKERS_54[27:36],
-        "Batch5: SNOW NET DDOG MDB ZS SHOP SPOT SE BABA": TICKERS_54[36:45],
-        "Batch6: PDD NIO LI BIDU X NEM GDX GLD SLV TLT IWM": TICKERS_54[45:54],
-    }
-    tickers = mapping[batch_choice]
-
-    with st.spinner(f"يبحث عمومي في {tickers} - يومي واسبوعي وشهري - الشروط الصارمة..."):
-        results = scan_batch(tickers)
-
-    if results:
-        df = pd.DataFrame(results).sort_values(["النقاط","OI"], ascending=False)
-        st.success(f"تم - وجد {len(df)} عقد ينطبق على شروطك الصارمة - مرتب بالاقرب للانفجار")
-        st.dataframe(df, use_container_width=True)
-
-        # اعرض اقوى 5 قبل الحركة
-        st.markdown("### اقوى 5 قبل الحركة - دخول قبل ما تتحرك")
-        for _, r in df.head(5).iterrows():
-            st.markdown(f"**{r['الشركة']} {r['العقد']} - {r['النوع']} باقي {r['باقي']} يوم - دخول ${r['الدخول']} - تجميع {r['OI']:,} - بعد {r['البعد%']}% - نقاط {r['النقاط']}**")
-            if r['باقي'] <= 1:
-                st.markdown("🔥 يومي - انفجاره اسرع واقوى واكثر ربح - دخول قبل الحركة الان")
-            st.progress(int(r["النقاط"])/100.0)
-    else:
-        st.warning("ياهو حاجب هذه الدفعة حاليا (السبت) - جرب دفعة ثانية او اضغط مسح الكاش وانتظر دقيقة - يوم الاثنين يشتغل عمومي 100%")
-        st.info("لو تبي تشوف حيتان الجمعة المؤقتة افتح V2300 - بس V2400 هذا هو البحث العمومي الحقيقي اللي طلبته")
-else:
-    st.info("هذا هو البحث العمومي اللي طلبته يا حوت")
-    st.markdown("**ما يتوقف - يبحث باي وقت - يومي انفجاره اسرع - اسبوعي وشهري نفس الشروط**")
-    st.markdown("- يبحث من 0DTE الى 45 يوم")
-    st.markdown("- يطبق شروطك الصارمة اولا: OI>8000 + BW<2.5% + سعر رخيص")
-    st.markdown("- بعدين يرتب بالاقرب للانفجار: DTE اقل + BW اقل = نقاط اعلى")
-    st.markdown("**فكرتك: ندخل قبل ما تتحرك - مو بعد ما تتحرك**")
+                    last=float(r['lastPrice'] or 0); bid=float(r['bid'] or 0); ask=float(r['ask'] or 0); vol=int(r['volume'] or 0); oi=int(r['openInterest'] or 0)
+                    if market_open:
+                        if not (1.0 <= last <= 4.0): continue
+                        if bid < 0.65: continue
+                    else:
+                        if not (0.40 <= last <= 6.0): continue
+                    mode = "LIVE" if market_open else "PRE"
+                    return {"ticker":ticker,"curr":curr_real,"exp":exp,"days":days,"strike":int(r['strike']),"last":last,"bid":bid,"ask":ask,"vol":vol,"oi":oi,"type":direction,"mode":mode}
+                except: continue
+    except: pass
+    return None
+def build_msg(c, reason):
+    base=c['curr']; last=c['last']; emoji="🟢" if c['type']=="CALL" else "🔴"
+    if c['type']=="CALL": t1=base*1.01; t2=base*1.025; t3=base*1.04
+    else: t1=base*0.99; t2=base*0.975; t3=base*0.96
+    return f"{emoji} {c['ticker']} {c['strike']} {c['type']} {c['mode']} - {reason}\nExp: {c['exp']} ({c['days']}d) Stock: ${base:.2f}\nEntry: ${last:.2f} Bid: ${c['bid']:.2f} Vol: {c['vol']} OI: {c['oi']}\nStop: ${last*0.55:.2f}\nTarget Stock: {t1:.1f} > {t2:.1f} > {t3:.1f}\nTarget Contract: ${last*1.5:.2f} (+50%) | ${last*2.3:.2f} (+130%) | ${last*3.2:.2f} (+220%)"
+st.title("V99 - عقود مرتبة من الاقوى")
+ksa_time = datetime.now(RIYADH).strftime("%H:%M:%S")
+ny_time = datetime.now(NY).strftime("%H:%M")
+m_status = "LIVE السوق فاتح" if is_market_open() else "PRE السوق مقفل"
+st.caption(f"الرياض {ksa_time} | نيويورك {ny_time} | {m_status}")
+col1,col2 = st.columns(2)
+with col1:
+    if st.button("📨 اختبار تلجرام", type="primary"):
+        ok = send("✅ V99 شغال - اختبار")
+        if ok: st.success("انرسل ✅ شيك تلجرام")
+        else: st.error("فشل")
+with col2:
+    if st.button("🗑️ تصفير المرسلة"): save([]); st.success("تصفر ✅")
+    st.metric("المرسلة اليوم", len(load()))
+sent = load()
+if st.button("🔍 افحص 54 - الاقوى اول", type="primary"):
+    prog = st.progress(0)
+    candidates = []
+    for i,t in enumerate(WATCHLIST_54):
+        ok, direction, chg, reason = is_strong(t)
+        if ok: candidates.append((abs(chg), chg, t, direction, reason))
+        prog.progress((i+1)/len(WATCHLIST_54)*0.5)
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    call_c = 0; put_c = 0
+    for idx, (score, chg, t, direction, reason) in enumerate(candidates):
+        c = get_contract(t, direction)
+        if not c: continue
+        key = f"{t}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
+        if key in sent: continue
+        msg = build_msg(c, reason)
+        st.code(msg)
+        if send(msg):
+            if c['type']=="CALL": call_c+=1
+            else: put_c+=1
+            sent.append(key); save(sent)
+        prog.progress(0.5 + (idx+1)/len(candidates)*0.5)
+        time.sleep(0.2)
+    st.balloons()
+    st.info(f"تم ✅ CALL {call_c} | PUT {put_c} | الاقوى اول")
