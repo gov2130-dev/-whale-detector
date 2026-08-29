@@ -1,4 +1,4 @@
-name: حوت 54 - رادار
+name: حوت 54 - رادار V600
 on:
   schedule:
     - cron: '30 8 * * 1-5'
@@ -6,8 +6,14 @@ on:
     - cron: '0 20 * * 1-5'
   workflow_dispatch:
 jobs:
-  notify:
+  scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Send
-        run: curl -X POST https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage -d chat_id=13889370 -d text="👑 رادار الحوت فحص"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install yfinance pandas requests pytz
+      - run: python app.py --scan
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
