@@ -1,73 +1,84 @@
-import streamlit as st, yfinance as yf, pandas as pd
+import streamlit as st, yfinance as yf, pandas as pd, os, requests, math
 from datetime import datetime
-import pytz, math, os, requests
+import pytz
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = "13889370"
-
-def send_tg(text):
+def send_tg(t):
     try:
-        if not BOT_TOKEN: return False
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
-        return True
-    except: return False
+        if not BOT_TOKEN: return
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id":CHAT_ID,"text":t,"parse_mode":"Markdown"}, timeout=10)
+    except: pass
 
 if "--scan" in os.sys.argv:
-    tickers = ["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL"]
-    msgs = []
+    tickers=["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","AVGO"]
+    msgs=[]
     for t in tickers:
         try:
-            tk = yf.Ticker(t)
+            tk=yf.Ticker(t)
             if not tk.options: continue
             for exp in tk.options[:2]:
                 try:
-                    chain = tk.option_chain(exp)
-                    df = chain.calls
-                    if df.empty: continue
-                    for _, r in df.iterrows():
-                        oi = r.get('openInterest',0)
-                        vol = r.get('volume',0)
-                        price = r.get('lastPrice',0)
-                        if oi>0 and vol>0 and oi > vol*1.5 and vol>80 and price>0.3 and price<20:
-                            msgs.append(f"💎 {t} {int(r['strike'])}C {exp} OI:{int(oi)} Vol:{int(vol)} ${price:.2f}")
+                    df=tk.option_chain(exp).calls
+                    for _,r in df.iterrows():
+                        oi=r.get('openInterest',0); vol=r.get('volume',0); p=r.get('lastPrice',0)
+                        if oi and vol and oi>vol*1.2 and vol>50 and 0.2<p<25:
+                            msgs.append(f"💎 {t} {int(r['strike'])}C {exp} OI:{int(oi)} V:{int(vol)} ${p}")
                 except: continue
         except: continue
-    if msgs:
-        txt = "👑 رادار الحوت V600 - تجميع:\n\n" + "\n".join(msgs[:15]) + "\n\nkashf-hetan-2130.streamlit.app"
-        send_tg(txt)
-    else:
-        send_tg("👑 رادار الحوت فحص - لا يوجد تجميع قوي الآن (ويكند)")
+    send_tg("👑 V600 فحص:\n\n" + ("\n".join(msgs[:20]) if msgs else "لا يوجد تجميع قوي (ويكند)"))
     os._exit(0)
 
-def norm_cdf(x): return 0.5 * (1 + math.erf(x / math.sqrt(2)))
-def norm_pdf(x): return math.exp(-0.5*x*x) / math.sqrt(2*math.pi)
-def calc_greeks(S,K,T,iv,side):
-    try:
-        if T<=0 or iv<=0: return 0,0,0,0
-        d1=(math.log(S/K)+(0.05+0.5*iv*iv)*T)/(iv*math.sqrt(T))
-        d2=d1-iv*math.sqrt(T)
-        delta = norm_cdf(d1) if side=="call" else norm_cdf(d1)-1
-        gamma = norm_pdf(d1)/(S*iv*math.sqrt(T))
-        theta = -(S*iv*norm_pdf(d1))/(2*math.sqrt(T))
-        vega = S*math.sqrt(T)*norm_pdf(d1)/100
-        return round(delta,2), round(gamma,3), round(theta,2), round(vega,2)
-    except: return 0,0,0,0
+st.set_page_config(layout="wide", page_title="Whale V600")
+st.title("👑 رادار التجميع V600 - حوت 54")
+st.caption("OI > Vol = تجميع حيتان قبل الانفجار")
 
-st.set_page_config(layout="wide", page_title="Whale V600 Radar")
-st.title("👑 حوت 54 - V600 رادار التجميع")
-st.caption("يشتغل قبل واثناء وبعد السوق - OI > Vol + BW ضيق = 💎")
+min_oi = st.sidebar.slider("💎 اقل OI", 500, 20000, 3000)
+min_vol = st.sidebar.slider("📊 اقل Vol", 10, 500, 30)
+ticker_list = st.sidebar.multiselect("الشركات", ["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","NFLX","AVGO"], default=["NVDA","TSLA","SPY","QQQ","PLTR"])
 
-if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
-if "idx" not in st.session_state: st.session_state.idx=0
-
-min_oi = st.sidebar.slider("💎 اقل OI", 1000, 50000, 5000, 1000)
-min_vol = st.sidebar.slider("📊 اقل Vol", 20, 1000, 80, 20)
-auto = st.sidebar.checkbox("⚡ فحص تلقائي", True)
-
-if st.sidebar.button("🚀 فحص الآن"):
-    st.session_state.idx=0
-    st.session_state.results=pd.DataFrame()
-    st.rerun()
-
-if not st.session_state.results.empty:
-    st.dataframe(st.session_state.results, use_container_width=True)
+if st.sidebar.button("🚀 فحص الآن", type="primary"):
+    rows=[]
+    bar=st.progress(0)
+    status=st.empty()
+    for i,t in enumerate(ticker_list):
+        status.write(f"يفحص {t}... {i+1}/{len(ticker_list)}")
+        bar.progress((i+1)/len(ticker_list))
+        try:
+            tk=yf.Ticker(t)
+            hist=tk.history(period="2d")
+            S=float(hist['Close'].iloc[-1]) if not hist.empty else 100
+            if not tk.options: continue
+            for exp in tk.options[:3]:
+                try:
+                    calls=tk.option_chain(exp).calls
+                    for _,r in calls.iterrows():
+                        oi=int(r.get('openInterest',0) or 0)
+                        vol=int(r.get('volume',0) or 0)
+                        price=float(r.get('lastPrice',0) or 0)
+                        strike=float(r['strike'])
+                        if oi>=min_oi and vol>=min_vol:
+                            ratio=oi/max(vol,1)
+                            bw=abs(strike-S)/S*100
+                            if ratio>1.2 and bw<10 and price>0.1:
+                                state="💎 جاهز للانفجار" if ratio>2 and bw<5 else "👀 مراقبة"
+                                rows.append({"Ticker":t,"Strike":strike,"Exp":exp,"S":round(S,1),"OI":oi,"Vol":vol,"OI/Vol":round(ratio,1),"Price":price,"BW%":round(bw,1),"حالة":state})
+                except: continue
+        except: continue
+    bar.empty(); status.empty()
+    if rows:
+        df=pd.DataFrame(rows).sort_values("OI", ascending=False)
+        st.success(f"✅ لقى {len(df)} عقد - {datetime.now(pytz.timezone('Asia/Riyadh')).strftime('%H:%M:%S')}")
+        st.dataframe(df, use_container_width=True, height=600)
+        if st.button("📤 ارسل لتلجرام"):
+            txt="👑 *V600 جواهر:*\n\n"
+            for _,r in df.head(10).iterrows():
+                txt+=f"{r['Ticker']} {r['Strike']}C OI:{r['OI']} {r['حالة']}\n"
+            send_tg(txt)
+            st.toast("ارسل ✅")
+    else:
+        st.warning("😴 ما لقى تجميع بهذي الفلاتر - نزل OI الى 1000 و Vol الى 20 لأن اليوم ويكند والسوق مقفل")
+        st.info("جرب يوم الاثنين وقت السوق - او خفف الفلاتر")
+else:
+    st.info("👈 من اليسار اختر الشركات واضغط 🚀 فحص الآن")
+    st.caption("اليوم سبت - السوق مقفل عشان كذا Vol قليل - الفحص الحقيقي الاثنين 4:30 العصر")
