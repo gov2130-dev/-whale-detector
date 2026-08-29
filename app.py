@@ -1,250 +1,151 @@
-import streamlit as st, yfinance as yf, requests, math, numpy as np, pandas as pd
+import streamlit as st, yfinance as yf, pandas as pd
 from datetime import datetime
-import pytz
+import pytz, math, os, requests
+import streamlit.components.v1 as components
 
-def norm_cdf(x): return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = "13889370"
+
+def send_tg(text):
+    try:
+        if not BOT_TOKEN: return False
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        return True
+    except:
+        return False
+
+# ========== وضع الفحص التلقائي للبوت ==========
+if "--scan" in os.sys.argv:
+    tickers = ["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL"]
+    msgs = []
+    for t in tickers:
+        try:
+            tk = yf.Ticker(t)
+            if not tk.options: continue
+            for exp in tk.options[:2]:
+                try:
+                    chain = tk.option_chain(exp)
+                    df = chain.calls
+                    if df.empty: continue
+                    for _, r in df.iterrows():
+                        oi = r.get('openInterest',0)
+                        vol = r.get('volume',0)
+                        price = r.get('lastPrice',0)
+                        if oi>0 and vol>0 and oi > vol*1.5 and vol>80 and price>0.3 and price<20:
+                            msgs.append(f"💎 *{t} {int(r['strike'])}C {exp}* OI:{int(oi)} Vol:{int(vol)} ${price:.2f}")
+                except: continue
+        except: continue
+    if msgs:
+        txt = "👑 *رادار الحوت V600 - تجميع جاهز للانفجار:*\n\n" + "\n".join(msgs[:15]) + "\n\n🔗 kashf-hetan-2130.streamlit.app"
+        send_tg(txt)
+    else:
+        send_tg("👑 رادار الحوت فحص 3 مرات يوميا - لا يوجد تجميع قوي الآن (ويكند) - kashf-hetan-2130.streamlit.app")
+    os._exit(0)
+
+# ========== V600 UI ==========
+def norm_cdf(x): return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 def norm_pdf(x): return math.exp(-0.5*x*x) / math.sqrt(2*math.pi)
 
 def calc_greeks(S,K,T,iv,side):
     try:
-        if T<=0 or iv<=0: return None
+        if T<=0 or iv<=0: return 0,0,0,0
         d1=(math.log(S/K)+(0.05+0.5*iv*iv)*T)/(iv*math.sqrt(T))
         d2=d1-iv*math.sqrt(T)
-        delta=norm_cdf(d1) if side=="CALL" else norm_cdf(d1)-1
-        gamma=norm_pdf(d1)/(S*iv*math.sqrt(T))
-        vega=S*norm_pdf(d1)*math.sqrt(T)/100
-        theta=(-S*norm_pdf(d1)*iv/(2*math.sqrt(T)) - 0.05*K*math.exp(-0.05*T)*(norm_cdf(d2) if side=="CALL" else norm_cdf(-d2)))/365
-        return {"delta":delta,"gamma":gamma,"theta":theta,"vega":vega}
-    except: return None
+        delta = norm_cdf(d1) if side=="call" else norm_cdf(d1)-1
+        gamma = norm_pdf(d1)/(S*iv*math.sqrt(T))
+        theta = -(S*iv*norm_pdf(d1))/(2*math.sqrt(T))
+        vega = S*math.sqrt(T)*norm_pdf(d1)/100
+        return round(delta,2), round(gamma,3), round(theta,2), round(vega,2)
+    except:
+        return 0,0,0,0
 
-def detect_accumulation(df5, curr):
-    close=df5['Close']; high=df5['High']; low=df5['Low']; vol=df5['Volume']
-    if len(close)<80: return None
+st.set_page_config(layout="wide", page_title="Whale V600 Radar", initial_sidebar_state="expanded")
 
-    # 1- VWAP
-    typical=(high+low+close)/3
-    vwap=(typical*vol).cumsum()/vol.cumsum()
-    vwap_n=float(vwap.iloc[-1])
+st.markdown("""
+<style>
+[data-testid="stSidebar"] {min-width:360px!important;}
+.stButton>button {width:100%!important; height:50px!important; background:#eef3ff!important; border:2px solid #3b82f6!important; border-radius:12px!important; font-weight:800!important;}
+.whale-table {width:100%; border-collapse:separate; border-spacing:0 8px;}
+.whale-table th {background:#1e293b; color:#94a3b8; padding:8px; text-align:center; font-size:11px;}
+.whale-table td {background:#fff; padding:10px 6px; text-align:center; font-weight:700; font-size:12px; color:#0f172a; border-radius:6px;}
+.badge-o {background:#fef3c7; color:#92400e; padding:3px 8px; border-radius:10px; font-size:11px;}
+.badge-bw {background:#dcfce7; color:#166534; padding:3px 8px; border-radius:10px; font-size:11px;}
+</style>
+""", unsafe_allow_html=True)
 
-    # 2- EMA
-    ema9=close.ewm(span=9).mean().iloc[-1]
-    ema20=close.ewm(span=20).mean().iloc[-1]
-    ema50=close.ewm(span=50).mean().iloc[-1]
+st.title("👑 حوت 54 - V600 رادار التجميع قبل الانفجار")
+st.caption("يشتغل قبل واثناء وبعد السوق - OI > Vol + BW ضيق = 💎")
 
-    # 3- Bollinger BandWidth - اهم شي للتجميع
-    sma20=close.rolling(20).mean()
-    std20=close.rolling(20).std()
-    upper=sma20+2*std20
-    lower=sma20-2*std20
-    bw=(upper-lower)/sma20
-    bw_n=float(bw.iloc[-1])
-    bw_20ago=float(bw.iloc[-20]) if len(bw)>20 else bw_n
+def get_tickers():
+    return ["NVDA","TSLA","AAPL","SPY","QQQ","AMD","META","MSFT","PLTR","COIN","MSTR","GOOGL","AMZN","NFLX","AVGO"]
 
-    # 4- RSI
-    delta_c=close.diff()
-    gain=delta_c.where(delta_c>0,0).rolling(14).mean()
-    loss=-delta_c.where(delta_c<0,0).rolling(14).mean()
-    rsi=100-(100/(1+gain/loss.replace(0,0.001)))
-    rsi_n=float(rsi.iloc[-1])
+if "results" not in st.session_state: st.session_state.results=pd.DataFrame()
+if "idx" not in st.session_state: st.session_state.idx=0
 
-    # 5- حجم التجميع - حجم ناشف ثم بداية دخول
-    vol_sma20=vol.rolling(20).mean()
-    vol_sma5=vol.rolling(5).mean()
-    vol_now=float(vol.iloc[-1])
-    vol_avg20=float(vol_sma20.iloc[-1])
-    vol_ratio=vol_now/vol_avg20 if vol_avg20>0 else 1
-    vol_dry = vol_ratio < 0.85 # حجم ناشف = تجميع
-    vol_starting = 0.9 <= vol_ratio <= 1.6 # بداية انفجار
+min_oi = st.sidebar.slider("💎 اقل OI", 1000, 50000, 5000, 1000)
+min_vol = st.sidebar.slider("📊 اقل Vol", 20, 1000, 80, 20)
+auto = st.sidebar.checkbox("⚡ فحص تلقائي", True)
 
-    # 6- نطاق ضيق
-    range_20 = (high.tail(20).max() - low.tail(20).min()) / curr
-    tight_range = range_20 < 0.06 # نطاق ضيق 6% في 20 شمعة = تجميع
+if st.sidebar.button("🚀 فحص الآن"):
+    st.session_state.idx=0
+    st.session_state.results=pd.DataFrame()
+    st.rerun()
 
-    # 7- قريب من الدعم/المقاومة
-    demand=float(low.tail(30).min())
-    supply=float(high.tail(30).max())
-    near_demand = abs(curr-demand)/curr < 0.03
-    near_supply = abs(curr-supply)/curr < 0.03
-
-    # تحديد الاتجاه
-    if curr > ema9 > ema20 and curr > vwap_n and curr > ema50:
-        direction="CALL"
-        setup="تجميع صاعد"
-    elif curr < ema9 < ema20 and curr < vwap_n and curr < ema50:
-        direction="PUT"
-        setup="تجميع هابط"
-    elif curr > vwap_n and rsi_n > 45:
-        direction="CALL"
-        setup="فوق VWAP"
+if st.sidebar.button("📤 ارسال التجميع لتلجرام"):
+    if not st.session_state.results.empty:
+        txt = "👑 *V600 - من التطبيق:*\n\n"
+        for _,r in st.session_state.results.head(10).iterrows():
+            txt+=f"💎 {r['ticker']} {r['strike']}C OI:{r['OI']} Vol:{r['Vol']}\n"
+        send_tg(txt)
+        st.sidebar.success("ارسل ✅")
     else:
-        direction="PUT"
-        setup="تحت VWAP"
+        st.sidebar.warning("لا يوجد نتائج")
 
-    # حساب نقاط الانفجار - كلما ضاق النطاق وزاد النشفان كلما قرب الانفجار
-    score=0; reasons=[]
-    if bw_n < 0.04:
-        score+=30; reasons.append(f"🔥 Squeeze قوي {bw_n*100:.2f}%")
-    elif bw_n < 0.06:
-        score+=20; reasons.append(f"Squeeze {bw_n*100:.2f}%")
+all_t = get_tickers()
+if auto and st.session_state.idx < len(all_t):
+    batch = all_t[st.session_state.idx:st.session_state.idx+4]
+    st.info(f"🔴 LIVE يفحص {batch} | {st.session_state.idx}/{len(all_t)}")
+    rows=[]
+    for t in batch:
+        try:
+            tk=yf.Ticker(t)
+            price=tk.history(period="1d")['Close'].iloc[-1] if not tk.history(period="1d").empty else 100
+            if not tk.options: continue
+            for exp in tk.options[:2]:
+                ch=tk.option_chain(exp)
+                for _,r in ch.calls.iterrows():
+                    oi=r.get('openInterest',0)
+                    vol=r.get('volume',0)
+                    if oi>=min_oi and vol>=min_vol and oi>vol*1.2:
+                        iv=r.get('impliedVolatility',0.5)
+                        T=0.1
+                        d,g,th,v = calc_greeks(price, r['strike'], T, iv, "call")
+                        bw = abs(r['strike']-price)/price
+                        if bw<0.08:
+                            rows.append({"ticker":t,"strike":int(r['strike']),"exp":exp,"OI":int(oi),"Vol":int(vol),"price":float(r['lastPrice']),"S":round(price,1),"BW":round(bw*100,1),"delta":d,"OI/Vol":round(oi/max(vol,1),1)})
+        except: pass
+    if rows:
+        df=pd.DataFrame(rows)
+        st.session_state.results = pd.concat([st.session_state.results, df]).sort_values("OI", ascending=False).drop_duplicates(subset=["ticker","strike","exp"]).head(100)
+    st.session_state.idx+=4
+    st.rerun()
 
-    if bw_n < bw_20ago*0.7:
-        score+=15; reasons.append("BW يتقلص = قرب انفجار")
+if not st.session_state.results.empty:
+    df=st.session_state.results.copy()
+    df["حالة"] = df.apply(lambda x: "💎 تجميع جاهز للانفجار" if x['OI/Vol']>1.5 and x['BW']<5 else "👀 مراقبة", axis=1)
+    st.success(f"✅ {len(df)} عقد تجميع | {datetime.now(pytz.timezone('Asia/Riyadh')).strftime('%H:%M:%S')}")
+    st.dataframe(df, use_container_width=True)
+    # ارسال تلقائي اذا فيه جواهر
+    gems = df[df["حالة"].str.contains("💎")]
+    if not gems.empty and st.sidebar.checkbox("🔔 ارسال تلقائي للجواهر", True):
+        if "sent_today" not in st.session_state:
+            txt = "💎 *جواهر V600:*\n\n"
+            for _,r in gems.head(5).iterrows():
+                txt+=f"{r['ticker']} {r['strike']}C OI:{r['OI']} Vol:{r['Vol']} BW:{r['BW']}%\n"
+            send_tg(txt)
+            st.session_state.sent_today=True
+else:
+    st.warning("⏳ اضغط فحص الآن - السوق ويكند النتائج تقل")
 
-    if vol_dry:
-        score+=20; reasons.append("حجم ناشف = تجميع")
-    if vol_starting:
-        score+=15; reasons.append("بداية دخول سيولة")
-
-    if tight_range:
-        score+=15; reasons.append(f"نطاق ضيق {range_20*100:.1f}%")
-
-    if near_demand or near_supply:
-        score+=10; reasons.append("عند منطقة انفجار")
-
-    if abs(curr-vwap_n)/curr < 0.008:
-        score+=10; reasons.append("ملتصق VWAP")
-
-    explosion_ready = (bw_n < 0.05 and (vol_dry or vol_starting) and tight_range)
-
-    return {
-        "vwap":vwap_n,"ema9":ema9,"ema20":ema20,"ema50":ema50,"rsi":rsi_n,"bw":bw_n,
-        "demand":demand,"supply":supply,"direction":direction,"score":score,
-        "reasons":reasons,"vol_ratio":vol_ratio,"range_20":range_20,
-        "setup":setup,"explosion_ready":explosion_ready,
-        "breakout":supply*1.003,"breakdown":demand*0.997
-    }
-
-st.set_page_config(page_title="حوت 54 - رادار التجميع", layout="wide")
-riyadh = pytz.timezone('Asia/Riyadh')
-eastern = pytz.timezone('US/Eastern')
-today_sa = datetime.now(riyadh).date()
-now_et = datetime.now(eastern)
-hour_et = now_et.hour + now_et.minute/60
-
-# تحديد حالة السوق
-if 4 <= hour_et < 9.5: market_status="🌙 قبل السوق - صيد التجميع"
-elif 9.5 <= hour_et < 16: market_status="🔥 السوق مفتوح - انفجارات"
-elif 16 <= hour_et < 20: market_status="🌆 بعد السوق - تحضير بكرة"
-else: market_status="😴 الليل - تجميع هادئ"
-
-with st.sidebar:
-    st.header("📤 التلجرام")
-    BOT_TOKEN = st.text_input("BOT TOKEN", value=st.secrets.get("BOT_TOKEN",""), type="password")
-    CHAT_ID = st.text_input("CHAT ID", value="13889370")
-    st.divider()
-    st.header("🎯 رادار التجميع")
-    mode = st.radio("نوع الصيد", ["💎 تجميع قبل الانفجار (الافضل)", "🔥 انفجار لحظي", "📦 الكل"], index=0)
-    min_score = st.slider("اقل نقاط انفجار", 40, 90, 55)
-
-STOCKS_54 = ["NVDA","TSLA","AAPL","MSFT","AMZN","META","NFLX","AMD","NVDL","TSLL","PLTR","COIN","MSTR","SMCI","AVGO","GOOGL","SPY","QQQ","IWM","TSM","ARM","MU","MRVL","CRWD","NOW","HOOD","SOFI","AFRM","UPST","DKNG","RBLX","U","SHOP","SQ","PYPL","INTC","QCOM","ADBE","CRM","ORCL","UBER","ABNB","NKE","DIS","BA","XOM","JPM","GS","MS","WMT","COST","PEP"]
-
-st.title("👑 بوت الحوت 54 - رادار التجميع قبل الانفجار V600")
-st.success(f"اليوم: {today_sa} | نيويورك: {now_et.strftime('%I:%M %p')} | {market_status}")
-
-def get_accumulation_contract(sym, mode_filter, min_score):
-    try:
-        tk=yf.Ticker(sym)
-        hist5=tk.history(period="10d", interval="15m") # 15 دقيقة افضل للتجميع
-        if hist5.empty or len(hist5)<80: return None
-        curr=float(hist5['Close'].iloc[-1])
-        tech=detect_accumulation(hist5, curr)
-        if not tech: return None
-
-        # فلترة حسب الوضع
-        if mode_filter=="💎 تجميع قبل الانفجار (الافضل)" and not tech['explosion_ready']:
-            if tech['score']<65: return None
-        if tech['score'] < 35: return None
-
-        valid=[]
-        for e in tk.options:
-            try:
-                d=datetime.strptime(e, "%Y-%m-%d").date()
-                days=(d-today_sa).days
-                if 2 <= days <= 21: # من يومين الى 3 اسابيع - افضل مدة للانفجار
-                    valid.append((e,days))
-            except: continue
-        if not valid: return None
-        valid.sort(key=lambda x: x[1])
-        best=None
-        for exp, days in valid[:3]:
-            T=days/365.0
-            try: chain=tk.option_chain(exp)
-            except: continue
-            df=chain.calls if tech['direction']=="CALL" else chain.puts
-            df=df.copy()
-            # عقود رخيصة ومجمعة
-            df=df[(df['bid']>=0.25) & (df['bid']<=4.5) & (df['volume'].fillna(0)>=150) & (df['openInterest'].fillna(0)>=400)]
-            if df.empty: continue
-            # اهم شرط للتجميع: OI اكبر من Vol = ناس مجمعة وما باعت
-            df=df[df['openInterest'] > df['volume']*0.8]
-            if df.empty: continue
-            df['dist']=abs(df['strike']-curr)/curr
-            df=df[df['dist']<=0.12] # قريب من السعر
-            if df.empty: continue
-            df=df.nsmallest(8,'dist')
-            for _,row in df.iterrows():
-                iv=float(row['impliedVolatility'])
-                if iv>2.8: continue
-                if iv<0.15: continue # IV ناشف = تجميع
-                greeks=calc_greeks(curr,float(row['strike']),T,iv,tech['direction'])
-                if not greeks: continue
-                if not (0.25 <= abs(greeks['delta']) <= 0.70): continue
-                spread=(float(row['ask'])-float(row['bid']))/float(row['bid']) if float(row['bid'])>0 else 1
-                if spread>0.40: continue
-
-                # نقاط اضافية للتجميع
-                oi_vol_bonus = 15 if row['openInterest'] > row['volume']*2 else 8 if row['openInterest'] > row['volume'] else 0
-                iv_bonus = 10 if iv < 0.50 else 0 # IV منخفض = فرصة
-                time_bonus = 15 if 5 <= days <= 10 else 10 if 3 <= days <= 14 else 0
-
-                final_score = tech['score'] + abs(greeks['delta'])*35 + greeks['gamma']*80 + oi_vol_bonus + iv_bonus + time_bonus - spread*15
-
-                cand={
-                    "symbol":sym,"side":tech['direction'],"curr":curr,"exp":exp,"days":days,
-                    "strike":row['strike'],"bid":float(row['bid']),"vol":int(row['volume']),"oi":int(row['openInterest']),"iv":iv,
-                    "delta":greeks['delta'],"gamma":greeks['gamma'],"theta":greeks['theta'],"vega":greeks['vega'],"spread":spread,
-                    "tech":tech,"score":final_score,
-                    "status": "💎 تجميع جاهز للانفجار" if tech['explosion_ready'] and final_score>=75 else "🔥 قرب انفجار" if final_score>=68 else "📦 تجميع"
-                }
-                if best is None or cand['score'] > best['score']: best=cand
-        return best if best and best['score']>=min_score else None
-    except: return None
-
-if st.button(f"🔍 فحص رادار التجميع - {market_status}", type="primary", use_container_width=True):
-    results=[]
-    prog=st.progress(0)
-    for i,s in enumerate(STOCKS_54):
-        prog.progress((i+1)/len(STOCKS_54), text=f"يفحص تجميع {s}")
-        d=get_accumulation_contract(s, mode, min_score)
-        if d: results.append(d)
-    prog.empty()
-    results.sort(key=lambda x: (x['tech']['explosion_ready'], x['score']), reverse=True)
-    results=results[:8]
-    st.session_state['res']=results
-    if not results:
-        st.warning("ما فيه تجميع قوي الحين - نزل النقاط الى 45 وجرب")
-    else:
-        st.success(f"لقي {len(results)} عقد مجمع 💎")
-        for r in results:
-            t=r['tech']
-            emoji="🟢" if r['side']=="CALL" else "🔴"
-            stxt=int(r['strike']) if r['strike']==int(r['strike']) else r['strike']
-            explosion = "💥 جاهز ينفجر" if t['explosion_ready'] else f"BW {t['bw']*100:.2f}%"
-            msg=f"""{r['status']} {emoji} {r['symbol']} {stxt} {r['side']} | {t['setup']} | {explosion}
-سهم: ${r['curr']:.2f} | عقد: ${r['bid']:.2f} | {r['days']} يوم | Δ{abs(r['delta']):.2f} Γ{r['gamma']:.3f}
-OI:{r['oi']} Vol:{r['vol']} {'OI>Vol تجميع' if r['oi']>r['vol'] else ''} IV:{r['iv']*100:.0f}% {'IV ناشف' if r['iv']<0.5 else ''}
-{', '.join(t['reasons'])} | Vol {t['vol_ratio']:.2f}x | نطاق {t['range_20']*100:.1f}%
-دخول: ${r['bid']:.2f} | هدف1: ${r['bid']*2:.2f} (100%) | هدف2: ${r['bid']*3.5:.2f} (250%) | هدف3: ${r['bid']*6:.2f} (500%)
-وقف: -40% اذا كسر {t['demand'] if r['side']=='CALL' else t['supply']:.2f}"""
-            st.code(msg)
-
-if 'res' in st.session_state and st.session_state['res']:
-    if st.button("📤 ارسل لتلجرام", type="primary", use_container_width=True):
-        c=0
-        for r in st.session_state['res']:
-            t=r['tech']
-            msg=f"{r['status']} {r['symbol']} {r['strike']} {r['side']} {r['days']}d Δ{abs(r['delta']):.2f} {'💥' if t['explosion_ready'] else ''} {', '.join(t['reasons'][:2])}"
-            try:
-                if requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id":CHAT_ID,"text":msg}, timeout=10).status_code==200: c+=1
-            except: pass
-        st.success(f"تم ارسال {c}")
+st.caption("V600 - رادار قبل واثناء وبعد السوق | BOT مربوط بتلجرام 13889370")
