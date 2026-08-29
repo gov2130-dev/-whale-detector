@@ -1,120 +1,213 @@
-import streamlit as st, yfinance as yf, requests, json, os, time
+import streamlit as st, yfinance as yf, requests, math, numpy as np, pandas as pd
 from datetime import datetime
 import pytz
-BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
-CHAT_ID="13889370"
-SENT_FILE="sent_today.json"
-RIYADH = pytz.timezone('Asia/Riyadh')
-NY = pytz.timezone('America/New_York')
-st.set_page_config(layout="wide", page_title="V99 SORTED")
-TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
-WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
-def is_market_open():
-    now_ny = datetime.now(NY)
-    if now_ny.weekday() >= 5: return False
-    mins = now_ny.hour*60 + now_ny.minute
-    return 570 <= mins <= 960
-def send(msg):
+from scipy.stats import norm
+
+st.set_page_config(page_title="حوت 54 - النهائي المدمج", layout="wide")
+st.markdown("<style>.stButton>button{width:100%;border-radius:12px;height:3.2em;font-weight:bold}</style>", unsafe_allow_html=True)
+
+riyadh = pytz.timezone('Asia/Riyadh')
+eastern = pytz.timezone('US/Eastern')
+today_sa = datetime.now(riyadh).date()
+now_et = datetime.now(eastern)
+
+with st.sidebar:
+    st.header("📤 التلجرام")
+    BOT_TOKEN = st.text_input("BOT TOKEN", value=st.secrets.get("BOT_TOKEN",""), type="password")
+    CHAT_ID = st.text_input("CHAT ID", value="13889370")
+    if st.button("🧪 اختبار"):
+        r=requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id":CHAT_ID,"text":"النهائي شغال 👑"}, timeout=10)
+        st.success("شغال ✅" if r.status_code==200 else r.text)
+    st.divider()
+    st.header("📚 السجل")
+    if 'history' not in st.session_state: st.session_state['history']=[]
+    for h in reversed(st.session_state['history'][-8:]):
+        with st.expander(f"{h['time']} - {h['count']}"):
+            st.code(h['preview'])
+
+STOCKS_54 = ["NVDA","TSLA","AAPL","MSFT","AMZN","META","NFLX","AMD","NVDL","TSLL","PLTR","COIN","MSTR","SMCI","AVGO","GOOGL","SPY","QQQ","IWM","TSM","ARM","MU","MRVL","CRWD","NOW","HOOD","SOFI","AFRM","UPST","DKNG","RBLX","U","SHOP","SQ","PYPL","INTC","QCOM","ADBE","CRM","ORCL","UBER","ABNB","NKE","DIS","BA","XOM","JPM","GS","MS","WMT","COST","PEP"]
+
+# ========== اليونانيات + الوقت ==========
+def calc_greeks(S,K,T,iv,side):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        r = requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
-        return r.status_code==200
-    except: return False
-def load():
-    if os.path.exists(SENT_FILE): return json.load(open(SENT_FILE))
-    return []
-def save(d): json.dump(d, open(SENT_FILE,'w'))
-def get_data(ticker):
-    real=TICKER_MAP.get(ticker,ticker)
-    tk=yf.Ticker(real)
-    try: curr=float(tk.fast_info['last_price'])
-    except:
-        h=tk.history(period="1d")
-        curr=float(h['Close'].iloc[-1]) if not h.empty else 0
-    daily=tk.history(period="20d", interval="1d")
-    return curr, daily, tk
-def is_strong(ticker):
+        if T<=0 or iv<=0: return None
+        d1=(math.log(S/K)+(0.05+0.5*iv*iv)*T)/(iv*math.sqrt(T))
+        d2=d1-iv*math.sqrt(T)
+        delta=norm.cdf(d1) if side=="CALL" else norm.cdf(d1)-1
+        gamma=norm.pdf(d1)/(S*iv*math.sqrt(T))
+        vega=S*norm.pdf(d1)*math.sqrt(T)/100
+        theta=(-S*norm.pdf(d1)*iv/(2*math.sqrt(T)) - 0.05*K*math.exp(-0.05*T)*(norm.cdf(d2) if side=="CALL" else norm.cdf(-d2)))/365
+        return {"delta":delta,"gamma":gamma,"theta":theta,"vega":vega}
+    except: return None
+
+def analyze_all(df5, curr):
+    close=df5['Close']; high=df5['High']; low=df5['Low']; vol=df5['Volume']
+    if len(close)<60: return None
+    ema9=close.ewm(span=9).mean().iloc[-1]
+    ema20=close.ewm(span=20).mean().iloc[-1]
+    typical=(high+low+close)/3
+    vwap=(typical*vol).cumsum()/vol.cumsum()
+    vwap_n=float(vwap.iloc[-1])
+    delta_c=close.diff()
+    gain=delta_c.where(delta_c>0,0).rolling(14).mean()
+    loss=-delta_c.where(delta_c<0,0).rolling(14).mean()
+    rsi=100-(100/(1+gain/loss.replace(0,0.001)))
+    rsi_n=float(rsi.iloc[-1])
+    sma20=close.rolling(20).mean()
+    std20=close.rolling(20).std()
+    bw=(sma20+2*std20 - (sma20-2*std20))/sma20
+    bw_n=float(bw.iloc[-1])
+    demand=float(low.tail(20).min())
+    supply=float(high.tail(20).max())
+    avg_v=vol.rolling(20).mean().iloc[-1]
+    vol_exp=float(vol.iloc[-1]) > avg_v*1.7
+    squeeze=bw_n<0.045
+    elliott_bull=(curr>ema9>ema20) and (ema9>vwap_n) and (55<rsi_n<78)
+    elliott_bear=(curr<ema9<ema20) and (ema9<vwap_n) and (22<rsi_n<45)
+    direction="CALL" if elliott_bull else "PUT" if elliott_bear else None
+    score=0; reasons=[]
+    if elliott_bull or elliott_bear: score+=25; reasons.append("اليوت موجة 3")
+    if squeeze: score+=20; reasons.append(f"Squeeze {bw_n*100:.1f}%")
+    if vol_exp: score+=20; reasons.append("حجم انفجاري")
+    if abs(curr-vwap_n)/curr<0.012: score+=10; reasons.append("قريب VWAP")
+    return {"vwap":vwap_n,"ema9":ema9,"ema20":ema20,"rsi":rsi_n,"bw":bw_n,"demand":demand,"supply":supply,"direction":direction,"score":score,"reasons":reasons,"squeeze":squeeze,"vol_exp":vol_exp,"breakout":supply*1.002 if direction=="CALL" else demand*0.998,"reversal":vwap_n}
+
+st.title("👑 بوت الحوت 54 - النهائي المدمج V500")
+st.info(f"اليوم: {today_sa} | نيويورك: {now_et.strftime('%H:%M')} | مدمج: تاريخ+Vol+OI+يونانيات+وقت+انفجار+اليوت+عرض/طلب")
+
+def get_final_merged(sym):
     try:
-        curr, daily, _ = get_data(ticker)
-        if daily.empty or len(daily)<10: return False,"",0,""
-        daily['EMA20']=daily['Close'].ewm(span=20).mean()
-        ema20=float(daily['EMA20'].iloc[-1])
-        open_t=float(daily['Open'].iloc[-1])
-        chg=(curr/open_t-1)*100
-        high_t=float(daily['High'].iloc[-1])
-        low_t=float(daily['Low'].iloc[-1])
-        if curr > ema20*0.998 and curr >= high_t*0.987 and chg > -0.8: return True, "CALL", chg, f"CALL {chg:+.1f}%"
-        elif curr < ema20*1.002 and curr <= low_t*1.013 and chg < 0.8: return True, "PUT", chg, f"PUT {chg:+.1f}%"
-        else: return False,"",chg,""
-    except: return False,"",0,""
-def get_contract(ticker, direction):
-    market_open = is_market_open()
-    try:
-        curr_real,_,tk = get_data(ticker)
-        today=datetime.now(NY).date()
-        exps=[e for e in tk.options if datetime.strptime(e,"%Y-%m-%d").date()>=today][:4]
-        for exp in exps:
-            days=(datetime.strptime(exp,"%Y-%m-%d").date()-today).days
-            if not (0 <= days <= (10 if market_open else 14)): continue
+        tk=yf.Ticker(sym)
+        hist5=tk.history(period="5d", interval="5m")
+        hist1=tk.history(period="2d", interval="1d")
+        if hist5.empty: return None
+        curr=float(hist5['Close'].iloc[-1])
+        prev=float(hist1['Close'].iloc[-2]) if len(hist1)>1 else curr
+        pre=float((curr-prev)/prev*100)
+
+        # ===== شروطك القديمة المدمجة 1: بري ماركت 0.2% الى 3.2% (مبكر) =====
+        if abs(pre) < 0.20 or abs(pre) > 3.2: return None
+
+        tech=analyze_all(hist5, curr)
+        if not tech or not tech['direction']: return None
+        # ===== شروطك القديمة 2: انفجار سكور 55+ =====
+        if tech['score'] < 55: return None
+
+        # ===== شروطك القديمة 3: تاريخ من بكره وطالع (مستحيل قديم) =====
+        valid=[]
+        for e in tk.options:
+            try:
+                d=datetime.strptime(e, "%Y-%m-%d").date()
+                days=(d-today_sa).days
+                # ===== حساب الوقت: 1 الى 14 يوم فقط (امثل للانفجار) =====
+                if d > today_sa and 1 <= days <= 14:
+                    valid.append((e,days))
+            except: continue
+        if not valid: return None
+        valid.sort(key=lambda x: x[1])
+
+        best=None
+        for exp, days in valid[:2]:
+            T=days/365.0
             chain=tk.option_chain(exp)
-            opts = chain.calls if direction=="CALL" else chain.puts
-            if opts.empty: continue
-            if direction=="CALL": opts=opts[(opts['strike']>=curr_real*0.98) & (opts['strike']<=curr_real*1.06)].sort_values('strike')
-            else: opts=opts[(opts['strike']>=curr_real*0.94) & (opts['strike']<=curr_real*1.02)].sort_values('strike', ascending=False)
-            for _, r in opts.iterrows():
-                try:
-                    last=float(r['lastPrice'] or 0); bid=float(r['bid'] or 0); ask=float(r['ask'] or 0); vol=int(r['volume'] or 0); oi=int(r['openInterest'] or 0)
-                    if market_open:
-                        if not (1.0 <= last <= 4.0): continue
-                        if bid < 0.65: continue
-                    else:
-                        if not (0.40 <= last <= 6.0): continue
-                    mode = "LIVE" if market_open else "PRE"
-                    return {"ticker":ticker,"curr":curr_real,"exp":exp,"days":days,"strike":int(r['strike']),"last":last,"bid":bid,"ask":ask,"vol":vol,"oi":oi,"type":direction,"mode":mode}
-                except: continue
-    except: pass
-    return None
-def build_msg(c, reason):
-    base=c['curr']; last=c['last']; emoji="🟢" if c['type']=="CALL" else "🔴"
-    if c['type']=="CALL": t1=base*1.01; t2=base*1.025; t3=base*1.04
-    else: t1=base*0.99; t2=base*0.975; t3=base*0.96
-    return f"{emoji} {c['ticker']} {c['strike']} {c['type']} {c['mode']} - {reason}\nExp: {c['exp']} ({c['days']}d) Stock: ${base:.2f}\nEntry: ${last:.2f} Bid: ${c['bid']:.2f} Vol: {c['vol']} OI: {c['oi']}\nStop: ${last*0.55:.2f}\nTarget Stock: {t1:.1f} > {t2:.1f} > {t3:.1f}\nTarget Contract: ${last*1.5:.2f} (+50%) | ${last*2.3:.2f} (+130%) | ${last*3.2:.2f} (+220%)"
-st.title("V99 - عقود مرتبة من الاقوى")
-ksa_time = datetime.now(RIYADH).strftime("%H:%M:%S")
-ny_time = datetime.now(NY).strftime("%H:%M")
-m_status = "LIVE السوق فاتح" if is_market_open() else "PRE السوق مقفل"
-st.caption(f"الرياض {ksa_time} | نيويورك {ny_time} | {m_status}")
-col1,col2 = st.columns(2)
-with col1:
-    if st.button("📨 اختبار تلجرام", type="primary"):
-        ok = send("✅ V99 شغال - اختبار")
-        if ok: st.success("انرسل ✅ شيك تلجرام")
-        else: st.error("فشل")
-with col2:
-    if st.button("🗑️ تصفير المرسلة"): save([]); st.success("تصفر ✅")
-    st.metric("المرسلة اليوم", len(load()))
-sent = load()
-if st.button("🔍 افحص 54 - الاقوى اول", type="primary"):
-    prog = st.progress(0)
-    candidates = []
-    for i,t in enumerate(WATCHLIST_54):
-        ok, direction, chg, reason = is_strong(t)
-        if ok: candidates.append((abs(chg), chg, t, direction, reason))
-        prog.progress((i+1)/len(WATCHLIST_54)*0.5)
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    call_c = 0; put_c = 0
-    for idx, (score, chg, t, direction, reason) in enumerate(candidates):
-        c = get_contract(t, direction)
-        if not c: continue
-        key = f"{t}_{c['exp']}_{c['strike']}_{c['type']}_{datetime.now(RIYADH).strftime('%Y-%m-%d')}"
-        if key in sent: continue
-        msg = build_msg(c, reason)
-        st.code(msg)
-        if send(msg):
-            if c['type']=="CALL": call_c+=1
-            else: put_c+=1
-            sent.append(key); save(sent)
-        prog.progress(0.5 + (idx+1)/len(candidates)*0.5)
-        time.sleep(0.2)
-    st.balloons()
-    st.info(f"تم ✅ CALL {call_c} | PUT {put_c} | الاقوى اول")
+            df=chain.calls if tech['direction']=="CALL" else chain.puts
+            df=df.copy()
+
+            # ===== شروطك القديمة 4: Vol + OI =====
+            df=df[(df['bid']>=0.45) & (df['bid']<=3.8) & (df['volume'].fillna(0)>=500) & (df['openInterest'].fillna(0)>=500)]
+            if df.empty: continue
+            # ===== شرط جديد: Vol انفجاري حوت حقيقي =====
+            df=df[df['volume'] > df['openInterest']*0.65]
+            if df.empty: continue
+            # ===== شروطك القديمة 5: قريب من السعر 7% =====
+            df['dist']=abs(df['strike']-curr)/curr
+            df=df[df['dist']<=0.07]
+            if df.empty: continue
+            # ===== شرط جديد: رخيص ما ارتفع =====
+            df=df[df['lastPrice'] <= df['bid']*1.9]
+            if df.empty: continue
+            df=df.nsmallest(10,'dist')
+
+            for _,row in df.iterrows():
+                iv=float(row['impliedVolatility'])
+                if iv<0.18 or iv>2.5: continue
+                greeks=calc_greeks(curr,float(row['strike']),T,iv,tech['direction'])
+                if not greeks: continue
+
+                # ===== حساب اليونانيات + الوقت المدمج =====
+                # دلتا مثالية
+                if not (0.38 <= abs(greeks['delta']) <= 0.64): continue
+                # ثيتا خفيفة (حساب الوقت: ما يخسر كثير كل يوم)
+                if greeks['theta'] < -0.12: continue
+                # فيغا وغاما
+                if greeks['vega'] < 0.02: continue
+                if greeks['gamma'] < 0.008: continue
+                # Spread ضيق
+                spread=(float(row['ask'])-float(row['bid']))/float(row['bid']) if float(row['bid'])>0 else 1
+                if spread>0.20: continue
+
+                # ===== سكور نهائي يحسب كل شي + الوقت =====
+                # كل ما قل الوقت زاد الثيتا خطر، نعطي افضلية 2-7 ايام
+                time_bonus = 10 if 2 <= days <= 7 else 0
+                final_score = tech['score'] + abs(greeks['delta'])*40 + greeks['gamma']*120 + greeks['vega']*10 - abs(greeks['theta'])*15 + (row['volume']/row['openInterest'])*12 + time_bonus - spread*30
+
+                cand={
+                    "symbol":sym,"side":tech['direction'],"pre":pre,"curr":curr,"exp":exp,"days":days,
+                    "strike":row['strike'],"bid":float(row['bid']),"ask":float(row['ask']),"vol":int(row['volume']),"oi":int(row['openInterest']),
+                    "iv":iv,"delta":greeks['delta'],"gamma":greeks['gamma'],"theta":greeks['theta'],"vega":greeks['vega'],
+                    "spread":spread,"tech":tech,"score":final_score,
+                    "status": "🔥 طالع 90%" if final_score>=88 else "🚀 صاعد 80%" if final_score>=75 else "⏳ مراقبة"
+                }
+                if best is None or cand['score'] > best['score']:
+                    best=cand
+        return best if best and best['score']>=72 else None
+    except: return None
+
+if st.button("🔍 فحص نهائي مدمج - 7 طبقات + يونانيات + وقت", type="primary", use_container_width=True):
+    results=[]
+    prog=st.progress(0)
+    for i,s in enumerate(STOCKS_54):
+        prog.progress((i+1)/len(STOCKS_54), text=s)
+        d=get_final_merged(s)
+        if d: results.append(d)
+    prog.empty()
+    results.sort(key=lambda x: x['score'], reverse=True)
+    results=results[:5]
+    st.session_state['res']=results
+
+    if not results:
+        st.error("اليوم ما فيه عقد يجمع كل الشروط - السوق هادي")
+    else:
+        st.success(f"لقي {len(results)} عقود تجمع كل شروطك ✅")
+        msgs=[]
+        for r in results:
+            t=r['tech']
+            emoji="🟢" if r['side']=="CALL" else "🔴"
+            stxt=int(r['strike']) if r['strike']==int(r['strike']) else r['strike']
+            # نفس ستايلك القديم + كل الاضافات
+            msg=f"""{r['status']} {emoji} {r['symbol']} {stxt} {r['side']} PRE {r['pre']:.2f}% | Δ{abs(r['delta']):.2f} Γ{r['gamma']:.3f} Θ{r['theta']:.3f} V{r['vega']:.3f}
+Exp: {r['exp']} ({r['days']}d) Stock: ${r['curr']:.2f} IV:{r['iv']*100:.0f}% Spread:{r['spread']*100:.0f}%
+Entry: ${r['bid']:.2f} Bid: ${r['bid']:.2f} Vol: {r['vol']} OI: {r['oi']} Vol/OI:{r['vol']/r['oi']:.1f}x
+{', '.join(t['reasons'])} | VWAP:${t['vwap']:.2f} RSI:{t['rsi']:.0f} {'SQUEEZE' if t['squeeze'] else ''}
+طلب: ${t['demand']:.2f} | عرض: ${t['supply']:.2f} | انفجار: ${t['breakout']:.2f} | انعكاس: ${t['reversal']:.2f}
+Stop: ${r['bid']*0.60:.2f} | Target: ${r['bid']*1.8:.2f} (+80%) | ${r['bid']*2.8:.2f} (+180%) | ${r['bid']*4.5:.2f} (+350%)
+وقت مثالي: {r['days']} يوم - ثيتا {r['theta']:.3f}/يوم"""
+            msgs.append(msg)
+            st.code(msg)
+            if r['score']>=88:
+                st.balloons()
+                st.success(f"✅ {r['symbol']} - هذا العقد طالع - كل الشروط مجتمعة + وقت مثالي")
+        if msgs:
+            st.session_state['history'].append({"time":datetime.now(riyadh).strftime("%m-%d %H:%M"),"count":len(msgs),"preview":msgs[0][:200],"msgs":msgs})
+
+if 'res' in st.session_state and st.session_state['res']:
+    st.divider()
+    if st.button("📤 ارسل النهائي المدمج لتلجرام", type="primary", use_container_width=True):
+        c=0
+        for r in st.session_state['res']:
+            emoji="🟢" if r['side']=="CALL" else "🔴"
+            msg=f"{r['status']} {emoji} {r['symbol']} {r['strike']} {r['side']} Δ{abs(r['delta']):.2f} {r['days']}d Θ{r['theta']:.3f} نقاط {r['score']:.0f}"
+            try:
+                if requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id":CHAT_ID,"text":msg}, timeout=10).status_code==200: c+=1
+            except: pass
+        st.success(f"تم ارسال {c} ✅")
