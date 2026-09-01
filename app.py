@@ -32,37 +32,31 @@ def load():
 def save(d): json.dump(d, open(SENT_FILE,'w'))
 
 def get_technical_direction(ticker):
-    # الجزء 1: تحديد اتجاه الشركة
     real=TICKER_MAP.get(ticker,ticker)
     try:
         df=yf.download(real, period="10d", interval="30m", progress=False, auto_adjust=True)
         if len(df)<40: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns=df.columns.get_level_values(0)
         close=df['Close']; vol=df['Volume']; open_=df['Open']; high=df['High']; low=df['Low']
-
         vwap=(close*vol).cumsum()/vol.cumsum()
         ema200=close.ewm(200).mean()
         ema20=close.ewm(20).mean()
         ema50=close.ewm(50).mean()
-
         score=0
         score+= 1 if close.iloc[-1]>vwap.iloc[-1] else -1
         score+= 1 if close.iloc[-1]>ema200.iloc[-1] else -1
         score+= 1 if ema20.iloc[-1]>ema50.iloc[-1] else -1
-
         delta=close.diff()
         gain=delta.where(delta>0,0).rolling(14).mean()
         loss=-delta.where(delta<0,0).rolling(14).mean()
         rsi=100-(100/(1+gain/loss))
         score+= 1 if rsi.iloc[-1]>60 else -1 if rsi.iloc[-1]<40 else 0
-
         if score>=3: return "CALL"
         if score<=-3: return "PUT"
         return "NEUTRAL"
     except: return None
 
 def find_matching_contract(ticker, direction):
-    # الجزء 2: البحث عن العقد المطابق فقط
     real=TICKER_MAP.get(ticker,ticker)
     try:
         tk=yf.Ticker(real)
@@ -70,37 +64,26 @@ def find_matching_contract(ticker, direction):
         if not curr:
             curr=float(tk.history(period="1d")['Close'].iloc[-1])
         else: curr=float(curr)
-
-        for exp in tk.options[:2]: # 1-3 ايام
+        for exp in tk.options[:2]:
             chain=tk.option_chain(exp)
             opts=chain.calls if direction=="CALL" else chain.puts
             if opts.empty: continue
-
             for _, row in opts.iterrows():
                 strike=row['strike']
-                # شرط 1: قريب 1.5%
                 dist=abs(strike-curr)/curr
                 if dist>0.015: continue
-
                 bid=row.get('bid',0) or 0
                 ask=row.get('ask',0) or 0
                 if bid==0 or ask==0: continue
-
-                # شرط 2: سبريد <5%
                 spread=(ask-bid)/ask*100
                 if spread>5: continue
-
                 vol=row.get('volume',0) or 0
                 oi=row.get('openInterest',0) or 0
                 qty=vol if vol>0 else oi
                 if qty<200: continue
-
                 mid=(bid+ask)/2
                 premium=mid*qty*100
-                # شرط 3: بريميوم حوت
-                if premium<100000: continue # ارفعها 400k لايف
-
-                # وجدنا عقد مطابق - نرجعه مباشرة
+                if premium<100000: continue
                 return {
                     "ticker":ticker, "dir":direction, "strike":strike, "exp":exp,
                     "premium":int(premium), "mid":round(mid,2), "spread":round(spread,1),
@@ -109,25 +92,19 @@ def find_matching_contract(ticker, direction):
         return None
     except: return None
 
-# الواجهة
-st.title("🐋 V99 - يرسل العقد فقط")
-st.caption("مثال: NVDA متوقع نزول = ابحث عن PUT مطابق وارسله")
+st.title("🐋 V99 - العقود فقط")
 
-if st.button("🚀 فحص وإرسال العقود فقط"):
+if st.button("🚀 فحص وإرسال العقود"):
     sent=load()
+    all_contracts=[]
     for t in WATCHLIST:
         direction=get_technical_direction(t)
         if not direction or direction=="NEUTRAL":
-            st.write(f"{t}: محايد - تخطي")
             continue
 
-        st.write(f"🔍 {t}: متوقع {direction} - ابحث عن عقد {direction}...")
         contract=find_matching_contract(t, direction)
-
         if contract:
-            df=pd.DataFrame([contract])
-            st.dataframe(df, use_container_width=True)
-
+            all_contracts.append(contract)
             key=f"{contract['ticker']}_{contract['strike']}_{contract['exp']}_{datetime.now(RIYADH).date()}"
             if key not in sent:
                 msg=(
@@ -135,16 +112,18 @@ if st.button("🚀 فحص وإرسال العقود فقط"):
                     f"Strike: {contract['strike']} | Exp: {contract['exp']}\n"
                     f"Premium: ${contract['premium']:,} | Qty: {contract['qty']}\n"
                     f"Mid: ${contract['mid']} | Spread: {contract['spread']}% | Dist: {contract['dist']}%\n"
-                    f"Price: ${contract['curr']} | اتجاه فني: {direction}"
+                    f"Price: ${contract['curr']}"
                 )
-                if send(msg):
-                    st.success(f"تم ارسال {t}")
-                    sent.append(key)
-                    save(sent)
-        else:
-            st.write(f"{t}: لا يوجد عقد مطابق للشروط")
-        time.sleep(1)
+                send(msg)
+                sent.append(key)
+                save(sent)
+        time.sleep(0.5)
+
+    if all_contracts:
+        st.dataframe(pd.DataFrame(all_contracts).sort_values("premium", ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("لا يوجد عقود مطابقة حاليا")
 
 st.divider()
 if is_market_open(): st.success("السوق مفتوح")
-else: st.warning("السوق مغلق - النتائج تجريبية")
+else: st.warning("السوق مغلق - نتائج تجريبية")
