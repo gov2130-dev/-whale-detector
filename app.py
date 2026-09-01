@@ -2,14 +2,13 @@ import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime
 import pytz
 import pandas as pd
-import numpy as np
 
 BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
 CHAT_ID="13889370"
 SENT_FILE="sent_today.json"
 RIYADH = pytz.timezone('Asia/Riyadh')
 NY = pytz.timezone('America/New_York')
-st.set_page_config(layout="wide", page_title="V99 WHALE FILTER V2")
+st.set_page_config(layout="wide", page_title="V99 SORTED")
 TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
 WATCHLIST_54 = ["NVDA","TSLA","AMD","AVGO","SMCI","ARM","MU","QCOM","PLTR","META","MSTR","COIN","MARA","RIOT","HOOD","SOFI","AFRM","UPST","GME","AMC","ASTS","RKLB","SOUN","IONQ","SMR","SERV","LUNR","AAPL","MSFT","GOOGL","AMZN","NFLX","ORCL","SPY","QQQ","IWM","SMH","XLF","XLE","TLT","TQQQ","SQQQ","TSLL","NVDL","APP","RDDT","DKNG","UBER","SHOP","SNOW","CRWD","DELL","INTC","WOLF","TEM","SPX","NDX"]
 
@@ -27,7 +26,7 @@ def send(msg):
     except: return False
 
 def load():
-    if os.path.exists(SENT_FILE): 
+    if os.path.exists(SENT_FILE):
         try: return json.load(open(SENT_FILE))
         except: return []
     return []
@@ -44,119 +43,141 @@ def get_data(ticker):
     daily=tk.history(period="20d", interval="1d")
     return curr, daily, tk
 
-# ===== الجزء الأول: محرك التحليل الفني - 4 مدارس =====
-def analyze_technical(ticker):
-    real = TICKER_MAP.get(ticker, ticker)
-    try:
-        df = yf.download(real, period="10d", interval="30m", progress=False)
-        if len(df) < 50: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        
-        close = df['Close']
-        high = df['High']
-        low = df['Low']
-        vol = df['Volume']
-        
-        # مدرسة 1: الترند
-        vwap = (close * vol).cumsum() / vol.cumsum()
-        ema200 = close.ewm(span=200).mean()
-        ema20 = close.ewm(span=20).mean()
-        ema50 = close.ewm(span=50).mean()
-        
-        trend_score = 0
-        if close.iloc[-1] > vwap.iloc[-1]: trend_score += 1
-        else: trend_score -= 1
-        if close.iloc[-1] > ema200.iloc[-1]: trend_score += 1
-        else: trend_score -= 1
-        if ema20.iloc[-1] > ema50.iloc[-1]: trend_score += 1
-        else: trend_score -= 1
-
-        # مدرسة 2: الزخم - RSI + Squeeze
-        delta = close.diff()
-        gain = delta.where(delta > 0, 0).rolling(14).mean()
-        loss = -delta.where(delta < 0, 0).rolling(14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        bb_mid = close.rolling(20).mean()
-        bb_std = close.rolling(20).std()
-        bb_upper = bb_mid + bb_std*2
-        bb_lower = bb_mid - bb_std*2
-        
-        momentum_score = 0
-        if rsi.iloc[-1] > 60: momentum_score += 1
-        elif rsi.iloc[-1] < 40: momentum_score -= 1
-        
-        if close.iloc[-1] > bb_upper.iloc[-1]: momentum_score += 1
-        elif close.iloc[-1] < bb_lower.iloc[-1]: momentum_score -= 1
-
-        # مدرسة 3: السيولة
-        vol_avg = vol.rolling(50).mean()
-        vol_score = 1 if vol.iloc[-1] > vol_avg.iloc[-1]*1.5 else -1 if vol.iloc[-1] < vol_avg.iloc[-1]*0.5 else 0
-        
-        # مدرسة 4: السلوك السعري
-        body = abs(close.iloc[-1] - df['Open'].iloc[-1])
-        rng = high.iloc[-1] - low.iloc[-1]
-        price_score = 1 if body > rng*0.7 and close.iloc[-1] > df['Open'].iloc[-1] else -1 if body > rng*0.7 else 0
-        
-        total = trend_score + momentum_score + vol_score + price_score
-        
-        if total >= 4: return {"dir": "CALL", "score": total, "label": "شراء قوي جدا"}
-        elif total >= 2: return {"dir": "CALL", "score": total, "label": "شراء"}
-        elif total <= -4: return {"dir": "PUT", "score": total, "label": "بيع قوي جدا"}
-        elif total <= -2: return {"dir": "PUT", "score": total, "label": "بيع"}
-        else: return {"dir": "NEUTRAL", "score": total, "label": "محايد"}
-    except:
-        return None
-
+# ========= الجزء الأول: is_strong - 4 مدارس فنية =========
 def is_strong(ticker):
-    tech = analyze_technical(ticker)
-    if not tech: return False, None
-    return tech['dir'] != "NEUTRAL", tech
+    real=TICKER_MAP.get(ticker,ticker)
+    try:
+        # نفحص 30د و 4س - اقوى فريمات للحيتان
+        best = None
+        for interval, period in [("30m","10d"), ("60m","10d"), ("4h","20d"), ("1d","50d")]:
+            df = yf.download(real, period=period, interval=interval, progress=False, auto_adjust=True)
+            if len(df) < 40: continue
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-# ===== الجزء الثاني: فلتر العقود الصارم - هنا تربط بياناتك الحقيقية =====
-def filter_contract(contract, tech_dir):
-    # contract = {'type': 'PUT'/'CALL', 'delta': 0.55, 'premium': 500000, 'spread': 2.5, 'contracts': 600, 'dte': 2, 'strike_dist': 0.01, 'is_sweep': True, 'gamma':0.08, 'theta':-0.10, 'iv_rank':50}
-    
-    if contract['type'] != tech_dir: return False # مخالف للاتجاه
-    if not (0.40 <= contract.get('delta',0) <= 0.70): return False
-    if contract.get('gamma',0) < 0.05: return False
-    if contract.get('theta',0) < -0.20: return False
-    if contract.get('iv_rank',0) > 70: return False
-    if contract.get('premium',0) < 400000: return False
-    if contract.get('spread',0) > 5: return False
-    if contract.get('contracts',0) < 500: return False
-    if contract.get('strike_dist',1) > 0.015: return False
-    if contract.get('dte',0) < 1 or contract.get('dte',0) > 3: return False
-    if not contract.get('is_sweep', False): return False
-    return True
+            close=df['Close']; vol=df['Volume']; open_=df['Open']; high=df['High']; low=df['Low']
 
-# ===== واجهة Streamlit =====
-st.title("🐋 V99 - فلتر الحيتان V2 - جزأين")
-st.caption("الجزء 1: تحليل فني 4 مدارس | الجزء 2: فلتر عقود صارم")
+            # 1- الترند
+            vwap = (close * vol).cumsum() / vol.cumsum()
+            ema200 = close.ewm(span=200).mean()
+            ema20 = close.ewm(span=20).mean()
+            ema50 = close.ewm(span=50).mean()
+            trend = 0
+            trend += 1 if close.iloc[-1] > vwap.iloc[-1] else -1
+            trend += 1 if close.iloc[-1] > ema200.iloc[-1] else -1
+            trend += 1 if ema20.iloc[-1] > ema50.iloc[-1] else -1
 
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("فحص فني لجميع الأسهم"):
-        results = []
-        for t in WATCHLIST_54:
-            ok, tech = is_strong(t)
-            if tech:
-                results.append({"Ticker": t, "الاتجاه": tech['dir'], "القوة": tech['label'], "النقاط": tech['score']})
-        df_res = pd.DataFrame(results).sort_values("النقاط", ascending=False)
-        st.dataframe(df_res, use_container_width=True)
-        
-        # ارسال اقوى 3 فقط
-        for r in results:
-            if abs(r['النقاط']) >= 4:
-                msg = f"📊 *{r['Ticker']}* - {r['القوة']} {r['الاتجاه']}\nنقاط: {r['النقاط']}/6 - فريم 30m\nالان نبحث عن عقود {r['الاتجاه']} فقط"
-                send(msg)
+            # 2- الزخم RSI + Squeeze
+            delta=close.diff()
+            gain=delta.where(delta>0,0).rolling(14).mean()
+            loss=-delta.where(delta<0,0).rolling(14).mean()
+            rs=gain/loss
+            rsi=100-(100/(1+rs))
+            bb_mid=close.rolling(20).mean()
+            bb_std=close.rolling(20).std()
+            bb_u=bb_mid+bb_std*2
+            bb_l=bb_mid-bb_std*2
+            mom=0
+            mom += 1 if rsi.iloc[-1] > 60 else -1 if rsi.iloc[-1] < 40 else 0
+            mom += 1 if close.iloc[-1] > bb_u.iloc[-1] else -1 if close.iloc[-1] < bb_l.iloc[-1] else 0
 
-with col2:
-    st.info("المرحلة القادمة: اربط بيانات Polygon للعقود في دالة filter_contract")
-    st.json({"شروط الحوت": "Premium>400k, Sweep=True, Delta 0.40-0.70, Spread<5%, DTE 1-3, قريب 1.5%"})
+            # 3- السيولة
+            vol_avg=vol.rolling(50).mean()
+            vol_s = 1 if vol.iloc[-1] > vol_avg.iloc[-1]*1.5 else -1 if vol.iloc[-1] < vol_avg.iloc[-1]*0.7 else 0
 
-if is_market_open():
-    st.success("السوق مفتوح - البوت يعمل")
-else:
-    st.warning("السوق مغلق")
+            # 4- السلوك السعري
+            body=abs(close.iloc[-1]-open_.iloc[-1])
+            rng=high.iloc[-1]-low.iloc[-1]
+            price_s = 1 if body > rng*0.7 and close.iloc[-1] > open_.iloc[-1] else -1 if body > rng*0.7 else 0
+
+            total=trend+mom+vol_s+price_s
+
+            curr_res = None
+            if total >= 4: curr_res = {"dir":"CALL","score":total,"label":"شراء قوي جدا","tf":interval,"rsi":round(float(rsi.iloc[-1]),1)}
+            elif total >= 2: curr_res = {"dir":"CALL","score":total,"label":"شراء","tf":interval,"rsi":round(float(rsi.iloc[-1]),1)}
+            elif total <= -4: curr_res = {"dir":"PUT","score":total,"label":"بيع قوي جدا","tf":interval,"rsi":round(float(rsi.iloc[-1]),1)}
+            elif total <= -2: curr_res = {"dir":"PUT","score":total,"label":"بيع","tf":interval,"rsi":round(float(rsi.iloc[-1]),1)}
+
+            if curr_res:
+                if best is None or abs(curr_res['score']) > abs(best['score']):
+                    best = curr_res
+
+        if best: return True, best
+        return False, None
+    except Exception as e:
+        return False, None
+
+# ========= الجزء الثاني: فلتر العقود =========
+def filter_whale_contracts(ticker, tech_dir):
+    try:
+        real=TICKER_MAP.get(ticker,ticker)
+        tk=yf.Ticker(real)
+        curr=float(tk.fast_info.get('last_price',0))
+        if curr==0:
+            h=tk.history(period="1d")
+            curr=float(h['Close'].iloc[-1])
+        exps=tk.options[:2] # اقرب تاريخين فقط 1-3 DTE
+        whales=[]
+        for exp in exps:
+            chain=tk.option_chain(exp)
+            opts = chain.calls if tech_dir=="CALL" else chain.puts
+            for _, row in opts.iterrows():
+                strike=row['strike']
+                dist=abs(strike-curr)/curr
+                if dist>0.015: continue
+                bid=row.get('bid',0); ask=row.get('ask',0)
+                if not bid or not ask: continue
+                spread=(ask-bid)/ask*100 if ask>0 else 100
+                if spread>5: continue
+                vol=row.get('volume',0) or 0
+                premium = (bid+ask)/2 * vol * 100
+                if premium < 100000: continue # ارفعها 400000 في اللايف
+                whales.append({"ticker":ticker,"type":tech_dir,"strike":strike,"exp":exp,"premium":int(premium),"spread":round(spread,1),"vol":int(vol),"dist":round(dist*100,2),"price":round((bid+ask)/2,2),"curr":round(curr,2)})
+        return sorted(whales, key=lambda x:x['premium'], reverse=True)[:2]
+    except: return []
+
+# ========= الواجهة =========
+st.title("🐋 V99 SORTED - نظام الجزأين")
+st.caption("الجزء 1: تحليل فني 4 مدارس | الجزء 2: فلتر عقود حيتان")
+
+if st.button("🚀 فحص شامل - 54 سهم"):
+    results=[]
+    whales_all=[]
+    prog=st.progress(0)
+    for i,t in enumerate(WATCHLIST_54):
+        prog.progress((i+1)/len(WATCHLIST_54))
+        ok, tech = is_strong(t)
+        if ok:
+            results.append({"Ticker":t,"اتجاه":tech['dir'],"قوة":tech['label'],"نقاط":tech['score'],"فريم":tech['tf'],"RSI":tech['rsi']})
+            # فلتر عقود لنفس السهم
+            wc = filter_whale_contracts(t, tech['dir'])
+            whales_all.extend(wc)
+
+    if results:
+        df=pd.DataFrame(results).sort_values("نقاط", ascending=False)
+        st.dataframe(df, use_container_width=True)
+
+        if whales_all:
+            st.subheader("🐋 عقود حيتان مطابقة للاتجاه الفني")
+            st.dataframe(pd.DataFrame(whales_all).sort_values("premium", ascending=False), use_container_width=True)
+
+            # ارسال تيليجرام فقط للاقوى
+            sent=load()
+            for r in results:
+                if abs(r['نقاط'])>=4:
+                    key=f"{r['Ticker']}_{r['اتجاه']}_{datetime.now(RIYADH).date()}"
+                    if key in sent: continue
+                    w = [x for x in whales_all if x['ticker']==r['Ticker']]
+                    if w:
+                        w=w[0]
+                        msg=f"🐋 *{r['Ticker']} {r['اتجاه']}* | {r['قوة']}\nفريم: {r['فريم']} | نقاط: {r['نقاط']}/6 | RSI: {r['RSI']}\n\n💰 عقد حوت: {w['strike']} {w['exp']}\nPremium: ${w['premium']:,} | Spread: {w['spread']}%\nDist: {w['dist']}% | Vol: {w['vol']} | سعر: ${w['price']}"
+                        if send(msg):
+                            sent.append(key)
+                            save(sent)
+                            time.sleep(1)
+    else:
+        st.warning("لا يوجد اسهم قوية حاليا - كلها محايدة")
+
+st.divider()
+st.info("الشروط: Premium>100k (اختبار) / 400k لايف | Spread<5% | Strike قريب 1.5% | اتجاه العقد = اتجاه فني")
+if is_market_open(): st.success("السوق مفتوح - البيانات لحظية")
+else: st.warning("السوق مغلق - بيانات متأخرة")
