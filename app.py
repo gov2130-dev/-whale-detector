@@ -13,92 +13,115 @@ def send(msg):
         return r.status_code==200
     except: return False
 
-def today_file():
-    return os.path.join(BASE, f"{date.today()}.json")
+def today_file(): return os.path.join(BASE, f"{date.today()}.json")
 
 def save_daily(contract):
     f=today_file()
-    data=[]
-    if os.path.exists(f):
-        try: data=json.load(open(f, encoding='utf-8'))
-        except: data=[]
-    # لا تكرر نفس العقد بنفس اليوم
+    data=json.load(open(f, encoding='utf-8')) if os.path.exists(f) else []
     if not any(d['key']==contract['key'] for d in data):
         data.append(contract)
         json.dump(data, open(f,"w",encoding='utf-8'), ensure_ascii=False, indent=2)
 
-def load_day(day):
-    f=os.path.join(BASE, f"{day}.json")
-    if os.path.exists(f):
-        return json.load(open(f, encoding='utf-8'))
-    return []
+def get_now_price(ticker, exp, strike, direction):
+    try:
+        tk=yf.Ticker(ticker)
+        chain=tk.option_chain(exp)
+        opts=chain.calls if direction=="CALL" else chain.puts
+        row=opts[opts['strike']==strike]
+        if row.empty: return None
+        bid=float(row['bid'].iloc[0] or 0)
+        ask=float(row['ask'].iloc[0] or 0)
+        if bid>0 and ask>0:
+            return round((bid+ask)/2,2)
+        return round(float(row['lastPrice'].iloc[0]),2)
+    except: return None
 
 st.set_page_config(layout="wide")
 st.markdown("""
 <style>
-.box{background:#1f1f1f;color:#fff;padding:18px;border-radius:12px;
-font-family:monospace;font-size:15px;line-height:1.7;border:1px solid #333;margin-bottom:14px}
-.day{color:#aaa;font-size:13px}
+.box{background:#1e1e1e;color:#fff;padding:18px;border-radius:12px;
+font-family:monospace;font-size:15px;line-height:1.8;border:1px solid #333;margin-bottom:14px;white-space:pre-wrap}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📅 V99 - أرشيف يومي للنتائج")
+st.title("📅 V99 - شكل موحد + Now")
 
-col1,col2 = st.columns([1,2])
-with col1:
-    if st.button("🚀 فحص اليوم وحفظ", use_container_width=True):
-        for t in ["QQQ","AAPL","META","AMD","IWM","SOFI","COIN","HOOD","SPY"]:
-            try:
-                tk=yf.Ticker(t)
-                curr=float(tk.fast_info.get('last_price') or tk.history(period="1d")['Close'].iloc[-1])
-                exp=tk.options[0]
-                dte=(datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
-                chain=tk.option_chain(exp)
-                is_put = curr < float(tk.history(period="5d")['Close'].mean())
-                opts=chain.puts if is_put else chain.calls
-                direction="PUT" if is_put else "CALL"
-                row=opts.iloc[(opts['strike']-curr).abs().argsort()[:1]].iloc[0]
-                entry=round((row['bid']+row['ask'])/2,2)
-                strike=int(row['strike']) if row['strike']==int(row['strike']) else row['strike']
+if st.button("🚀 فحص اليوم وحفظ", use_container_width=True):
+    for t in ["SPY","QQQ","AAPL","META","AMD","IWM","SOFI","COIN","HOOD","NVDA","TSLA"]:
+        try:
+            tk=yf.Ticker(t)
+            curr=float(tk.fast_info.get('last_price') or tk.history(period="1d")['Close'].iloc[-1])
+            exp=tk.options[1] if len(tk.options)>1 else tk.options[0]
+            dte=(datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
+            if dte<1 or dte>7: continue
+            chain=tk.option_chain(exp)
+            is_put = curr < float(tk.history(period="5d")['Close'].mean())
+            opts=chain.puts if is_put else chain.calls
+            direction="PUT" if is_put else "CALL"
+            row=opts.iloc[(opts['strike']-curr).abs().argsort()[:1]].iloc[0]
+            entry=round((row['bid']+row['ask'])/2,2)
+            if entry<0.3: continue
+            strike=int(row['strike']) if row['strike']==int(row['strike']) else row['strike']
+            dr=tk.history(period="1d")
+            low=round(float(dr['Low'].iloc[-1]),2)
+            high=round(float(dr['High'].iloc[-1]),2)
+            close_c=round(float(row.get('lastPrice',entry) or entry),2)
 
-                emoji="🔴" if direction=="PUT" else "🟢"
-                text=f"{emoji} {t} {strike} {direction} 🐋\nExp: {exp} ({dte}d) Stock: ${round(curr,2)}\nEntry: ${entry} Bid: ${round(row['bid'],2)}\nStop: ${round(entry*0.5,2)}\nTarget: ${round(entry*1.5,2)} (+50%) | ${round(entry*2.3,2)} (+130%) | ${round(entry*3.2,2)} (+220%)"
+            # السعر الحالي Now
+            now_price = get_now_price(t, exp, row['strike'], direction) or entry
+            pnl = (now_price-entry)/entry*100
 
-                contract={"key":f"{t}_{strike}_{direction}_{exp}","ticker":t,"strike":strike,"dir":direction,"exp":exp,"entry":entry,"curr_stock":round(curr,2),"text":text,"time":datetime.now().strftime("%H:%M")}
-                save_daily(contract)
-                st.markdown(f'<div class="box">{text.replace(chr(10),"<br>")}<div class="day">حفظ: {date.today()} {contract["time"]}</div></div>', unsafe_allow_html=True)
-                send(text)
-                time.sleep(0.5)
-            except: continue
-        st.success(f"تم حفظ بحث اليوم {date.today()}")
+            if now_price <= entry*0.5: status=f"🔴 وقف {pnl:+.1f}%"
+            elif now_price >= entry*3.2: status=f"🟢 هدف 3 {pnl:+.1f}%"
+            elif now_price >= entry*2.3: status=f"🟢 هدف 2 {pnl:+.1f}%"
+            elif now_price >= entry*1.5: status=f"🟢 هدف 1 {pnl:+.1f}%"
+            else: status=f"⚪ شغال {pnl:+.1f}%"
 
-with col2:
-    st.subheader("📂 الأرشيف - اختر يوم")
-    files=sorted(os.listdir(BASE), reverse=True) if os.path.exists(BASE) else []
-    days=[f.replace(".json","") for f in files]
-    sel=st.selectbox("اختر اليوم", days if days else ["لا يوجد"])
+            emoji="🔴" if direction=="PUT" else "🟢"
+            # نص موحد 100% للموقع والتيليجرام
+            unified_text = (
+                f"{emoji} {t} {strike} {direction} 🐋\n"
+                f"Exp: {exp} ({dte}d) Stock: ${round(curr,2)} BW {round(abs(strike-curr)/curr*100,2)}%\n"
+                f"Range: ${low} - ${high}\n"
+                f"Close: ${close_c}\n"
+                f"Entry: ${entry} Bid: ${round(row['bid'],2)}\n"
+                f"Stop: ${round(entry*0.5,2)}\n"
+                f"Target Stock: {round(strike-0.3,2) if direction=='PUT' else round(strike+0.3,2)} > {round(strike-0.6,2) if direction=='PUT' else round(strike+0.6,2)} > {round(strike-1.0,2) if direction=='PUT' else round(strike+1.0,2)}\n"
+                f"Target Contract: ${round(entry*1.5,2)} (+50%) | ${round(entry*2.3,2)} (+130%) | ${round(entry*3.2,2)} (+220%)\n"
+                f"Now: ${now_price} | {status}"
+            )
 
-    if sel and sel!="لا يوجد":
-        data=load_day(sel)
-        st.write(f"**{len(data)} عقد في {sel}**")
-        for c in data:
-            # جلب السعر الحالي للمقارنة
-            try:
-                tk=yf.Ticker(c['ticker'])
-                chain=tk.option_chain(c['exp'])
-                opts=chain.calls if c['dir']=="CALL" else chain.puts
-                row=opts[opts['strike']==c['strike']]
-                now=round((float(row['bid'].iloc[0])+float(row['ask'].iloc[0]))/2,2) if not row.empty else 0
-                pnl=(now-c['entry'])/c['entry']*100 if now else 0
-                if now:
-                    if now <= c['entry']*0.5: res=f"🔴 ضرب وقف | كان ${c['entry']} الآن ${now} {pnl:+.1f}%"
-                    elif now >= c['entry']*3.2: res=f"🟢 هدف 3 | كان ${c['entry']} الآن ${now} {pnl:+.1f}%"
-                    elif now >= c['entry']*2.3: res=f"🟢 هدف 2 | كان ${c['entry']} الآن ${now} {pnl:+.1f}%"
-                    elif now >= c['entry']*1.5: res=f"🟢 هدف 1 | كان ${c['entry']} الآن ${now} {pnl:+.1f}%"
-                    else: res=f"⚪ شغال | كان ${c['entry']} الآن ${now} {pnl:+.1f}%"
-                else:
-                    res="منتهي أو غير موجود"
-            except:
-                res="--"
+            contract={"key":f"{t}_{strike}_{direction}_{exp}","ticker":t,"strike":float(row['strike']),"dir":direction,"exp":exp,"entry":entry,"text":unified_text,"time":datetime.now().strftime("%H:%M")}
+            save_daily(contract)
 
-            st.markdown(f'<div class="box">{c["text"].replace(chr(10),"<br>")}<br><br>📌 النتيجة الآن: {res}<br><span class="day">وقت الحفظ: {c["time"]} يوم {sel}</span></div>', unsafe_allow_html=True)
+            # نفس النص في الموقع والتيليجرام
+            st.markdown(f'<div class="box">{unified_text}</div>', unsafe_allow_html=True)
+            send(unified_text)
+            time.sleep(0.5)
+        except Exception as e:
+            continue
+
+st.divider()
+st.subheader("📂 الأرشيف - نفس الشكل مع تحديث Now")
+files=sorted(os.listdir(BASE), reverse=True)
+days=[f.replace(".json","") for f in files]
+sel=st.selectbox("اختر اليوم", days if days else ["لا يوجد"])
+
+if sel!="لا يوجد":
+    data=json.load(open(os.path.join(BASE,f"{sel}.json"), encoding='utf-8'))
+    for c in data:
+        now_price = get_now_price(c['ticker'], c['exp'], c['strike'], c['dir']) or c['entry']
+        pnl=(now_price-c['entry'])/c['entry']*100
+        if now_price <= c['entry']*0.5: status=f"🔴 وقف {pnl:+.1f}%"
+        elif now_price >= c['entry']*3.2: status=f"🟢 هدف 3 {pnl:+.1f}%"
+        elif now_price >= c['entry']*2.3: status=f"🟢 هدف 2 {pnl:+.1f}%"
+        elif now_price >= c['entry']*1.5: status=f"🟢 هدف 1 {pnl:+.1f}%"
+        else: status=f"⚪ شغال {pnl:+.1f}%"
+
+        # نحدث سطر Now فقط
+        lines=c['text'].split("\n")
+        lines=[l for l in lines if not l.startswith("Now:")]
+        lines.append(f"Now: ${now_price} | {status} | تحديث الآن")
+        updated="\n".join(lines)
+
+        st.markdown(f'<div class="box">{updated}</div>', unsafe_allow_html=True)
