@@ -4,9 +4,8 @@ import pytz
 import pandas as pd
 
 BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
-CHAT_ID="13889370"
+CHAT_ID="13889370" # تأكد انه نفسه اللي في BotFather
 SENT_FILE="sent_today.json"
-RIYADH = pytz.timezone('Asia/Riyadh')
 NY = pytz.timezone('America/New_York')
 st.set_page_config(layout="wide", page_title="V99 FINAL")
 TICKER_MAP = {"SPX":"^SPX","NDX":"^NDX"}
@@ -15,9 +14,14 @@ WATCHLIST = ["NVDA","TSLA","SPY","QQQ","AAPL","MSFT","META","AMD","SMH","IWM","S
 def send(msg):
     try:
         url=f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        r=requests.post(url, data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
+        # شلت parse_mode عشان $ و % ما تخرب الرسالة
+        data={'chat_id':CHAT_ID,'text':msg}
+        r=requests.post(url, data=data, timeout=15)
+        st.write(f"Telegram Status: {r.status_code} - {r.text[:200]}") # Debug
         return r.status_code==200
-    except: return False
+    except Exception as e:
+        st.error(f"خطأ ارسال: {e}")
+        return False
 
 def load():
     if os.path.exists(SENT_FILE):
@@ -117,29 +121,33 @@ def find_matching_contract(ticker, direction):
         return None
     except: return None
 
-st.title("🐋 V99 - العقود في الصفحة + تيليجرام")
+st.title("🐋 V99 - اختبار التيليجرام")
 
-if st.button("🚀 فحص العقود"):
+# زر اختبار سريع
+if st.button("📨 اختبار التيليجرام فقط"):
+    if send("تجربة بوت V99 🐋"):
+        st.success("انرسل - شيك التيليجرام")
+    else:
+        st.error("ما انرسل - شيك الـ CHAT_ID والبوت")
+
+st.divider()
+
+if st.button("🚀 فحص العقود وارسال"):
     sent=load()
     all_contracts=[]
-    with st.spinner("نفحص الشركات..."):
-        for t in WATCHLIST:
-            direction=get_technical_direction(t)
-            if not direction or direction=="NEUTRAL":
-                continue
-            contract=find_matching_contract(t, direction)
-            if contract:
-                all_contracts.append(contract)
-            time.sleep(0.3)
+    for t in WATCHLIST:
+        direction=get_technical_direction(t)
+        if not direction or direction=="NEUTRAL":
+            continue
+        contract=find_matching_contract(t, direction)
+        if contract:
+            all_contracts.append(contract)
+        time.sleep(0.3)
 
     if not all_contracts:
-        st.info("لا يوجد عقود مطابقة حاليا")
+        st.info("لا يوجد عقود")
     else:
-        st.success(f"وجدنا {len(all_contracts)} عقد")
-        
-        # عرض بنفس صيغة التيليجرام في الصفحة
-        cols = st.columns(2)
-        for i, c in enumerate(all_contracts):
+        for c in all_contracts:
             emoji = "🟢" if c['dir']=="CALL" else "🔴"
             text = (
                 f"{emoji} {c['ticker']} {c['strike']} {c['dir']} 🐋\n"
@@ -150,28 +158,7 @@ if st.button("🚀 فحص العقود"):
                 f"Target Stock: {c['t1_s']} > {c['t2_s']} > {c['t3_s']}\n"
                 f"Target Contract: ${c['t1_c']} (+50%) | ${c['t2_c']} (+130%) | ${c['t3_c']} (+220%)"
             )
-            with cols[i % 2]:
-                st.code(text, language="text")
-                
-                # زر ارسال للتيليجرام
-                if st.button(f"ارسال {c['ticker']} للتيليجرام", key=f"send_{c['ticker']}_{c['strike']}_{i}"):
-                    if send(text):
-                        st.toast(f"تم ارسال {c['ticker']}")
-
-        # ارسال تلقائي
-        st.divider()
-        if st.button("📤 ارسال الكل للتيليجرام"):
-            for c in all_contracts:
-                emoji = "🟢" if c['dir']=="CALL" else "🔴"
-                msg = (
-                    f"{emoji} {c['ticker']} {c['strike']} {c['dir']} 🐋\n"
-                    f"Exp: {c['exp']} ({c['dte']}d) Stock: ${c['curr']} BW {c['bw']}%\n"
-                    f"Range: ${c['range_low']} - ${c['range_high']} Close: ${c['close']}\n"
-                    f"Entry: ${c['entry']} Bid: ${c['bid']}\n"
-                    f"Stop: ${c['stop']}\n"
-                    f"Target Stock: {c['t1_s']} > {c['t2_s']} > {c['t3_s']}\n"
-                    f"Target Contract: ${c['t1_c']} (+50%) | ${c['t2_c']} (+130%) | ${c['t3_c']} (+220%)"
-                )
-                send(msg)
-                time.sleep(1)
-            st.success("تم ارسال الكل")
+            st.code(text)
+            # ارسال مباشر بدون شرط التكرار للاختبار
+            send(text)
+            time.sleep(1)
