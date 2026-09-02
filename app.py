@@ -1,144 +1,290 @@
-import streamlit as st, yfinance as yf, requests, json, os, time
+import yfinance as yf
+import time
+import requests
+from datetime import datetime
 import pandas as pd
-from datetime import datetime, date
 
-BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
-CHAT_ID="13889370"
-BASE="daily_results"
-os.makedirs(BASE, exist_ok=True)
-WATCHLIST=["SPY","QQQ","AAPL","META","NVDA","TSLA","AMD","HOOD","COIN","SOFI"]
+# ================== الاعدادات ==================
+TELEGRAM_BOT_TOKEN = "ضع_توكن_البوت_هنا"
+TELEGRAM_CHAT_ID = "ضع_الايدي_هنا"
 
-def send(msg):
+TICKERS = ["SPY","QQQ","AAPL","TSLA","NVDA","AMD","MSFT","META","AMZN","GOOGL"]
+MIN_PRICE = 0.20
+MAX_PRICE = 4.00
+MIN_PREMIUM = 75000  # اقل بريميوم حوت
+SCAN_INTERVAL = 60  # كل دقيقة
+
+def send_telegram(msg):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
-        return True
-    except:
-        return False
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+    except Exception as e:
+        print(f"Telegram error: {e}")
 
-def get_fibo(h,l,d):
-    diff = (h-l) or 1.0
-    if d=="PUT":
-        return round(l-diff*0.382,2), round(l-diff*0.618,2), round(l-diff*1.0,2)
-    return round(h+diff*0.382,2), round(h+diff*0.618,2), round(h+diff*1.0,2)
-
-def get_strong_direction(ticker):
+# ================== 1. استراتيجية 25 مصطلح - اتجاه السهم المؤكد ==================
+def get_confirmed_stock_signal(ticker):
+    """
+    يطبق كل المصطلحات:
+    PDL, PDH, PDC, PMH, PML, Market Open, ORH, ORL, VWAP, Support, Resistance,
+    Volume, RVOL, HH, HL, LH, LL, Breakout, Breakdown, Retest, Liquidity,
+    Consolidation, Pullback, Stop Loss, Confirmation
+    """
     try:
         tk = yf.Ticker(ticker)
-        df15 = tk.history(period="10d", interval="15m")
-        df5 = tk.history(period="5d", interval="5m")
-        df_daily = tk.history(period="20d")
-        if df15.empty or len(df15) < 30:
-            df15 = df_daily
-        if df5.empty:
-            df5 = df_daily
-        curr = float(df15['Close'].iloc[-1])
-        ema9 = df15['Close'].ewm(span=9, min_periods=1).mean().iloc[-1]
-        ema20 = df15['Close'].ewm(span=20, min_periods=1).mean().iloc[-1]
-        ema50 = df15['Close'].ewm(span=50, min_periods=1).mean().iloc[-1]
-        try:
-            df5['TP'] = (df5['High']+df5['Low']+df5['Close'])/3
-            vwap = (df5['TP']*df5['Volume']).sum() / df5['Volume'].sum()
-            if pd.isna(vwap):
-                vwap = df15['Close'].mean()
-        except:
-            vwap = df15['Close'].mean()
-        try:
-            delta = df15['Close'].diff()
-            gain = delta.where(delta>0,0).rolling(14, min_periods=5).mean()
-            loss = -delta.where(delta<0,0).rolling(14, min_periods=5).mean()
-            rs = gain / loss.replace(0,0.001)
-            rsi = 100 - (100/(1+rs))
-            rsi_now = float(rsi.iloc[-1])
-            if pd.isna(rsi_now):
-                rsi_now = 50
-        except:
-            rsi_now = 50
-        try:
-            avg_vol = df_daily['Volume'].mean()
-            vol_now = df5['Volume'].sum() if not df5.empty else df_daily['Volume'].iloc[-1]
-            vol_ok = vol_now > avg_vol * 0.5
-        except:
-            vol_ok = True
-        call_strong = ema9 > ema20 and ema9 > ema50 and curr > vwap and 50 <= rsi_now <= 75 and vol_ok
-        put_strong = ema9 < ema20 and ema9 < ema50 and curr < vwap and 25 <= rsi_now <= 50 and vol_ok
-        if call_strong:
-            return "CALL"
-        if put_strong:
-            return "PUT"
-        return None
-    except:
-        return None
+        df15 = tk.history(period="10d", interval="15m", auto_adjust=True)
+        df_daily = tk.history(period="10d", interval="1d", auto_adjust=True)
+        df1m_today = tk.history(period="1d", interval="1m", auto_adjust=True)
 
-@st.cache_data(ttl=20)
-def get_now_fast(ticker, exp, strike, direction):
-    try:
-        tk=yf.Ticker(ticker)
-        chain=tk.option_chain(exp)
-        opts=chain.calls if direction=="CALL" else chain.puts
-        row=opts[opts['strike']==float(strike)]
-        if row.empty:
+        if df15.empty or len(df15) < 60 or df_daily.empty or len(df_daily) < 3:
             return None
-        bid=float(row['bid'].iloc[0] or 0)
-        ask=float(row['ask'].iloc[0] or 0)
-        if bid>0 and ask>0:
-            return round((bid+ask)/2,2)
-        return round(float(row['lastPrice'].iloc[0]),2)
-    except:
+
+        curr = float(df15['Close'].iloc[-1])
+        curr_high = float(df15['High'].iloc[-1])
+        curr_low = float(df15['Low'].iloc[-1])
+        curr_vol = float(df15['Volume'].iloc[-1])
+
+        # --- PDL / PDH / PDC (Previous Day)
+        pdh = float(df_daily['High'].iloc[-2])
+        pdl = float(df_daily['Low'].iloc[-2])
+        pdc = float(df_daily['Close'].iloc[-2])
+
+        # --- PMH / PML + ORH / ORL + Market Open
+        if not df1m_today.empty:
+            pre = df1m_today.between_time("04:00", "09:29")  # Premarket
+            or_data = df1m_today.between_time("09:30", "09:44")  # Opening Range 15m
+            
+            pmh = float(pre['High'].max()) if not pre.empty else float(df_daily['High'].iloc[-1])
+            pml = float(pre['Low'].min()) if not pre.empty else float(df_daily['Low'].iloc[-1])
+            orh = float(or_data['High'].max()) if not or_data.empty else pmh
+            orl = float(or_data['Low'].min()) if not or_data.empty else pml
+        else:
+            pmh = float(df15['High'].tail(26).max())
+            pml = float(df15['Low'].tail(26).min())
+            orh = pmh
+            orl = pml
+
+        # --- VWAP 15m
+        tp = (df15['High'] + df15['Low'] + df15['Close']) / 3
+        vwap = float((tp * df15['Volume']).sum() / df15['Volume'].sum())
+
+        # --- Volume / RVOL / Liquidity
+        avg_vol_20 = float(df15['Volume'].tail(20).mean())
+        rvol = curr_vol / avg_vol_20 if avg_vol_20 > 0 else 0
+
+        # --- HH/HL/LH/LL + EMA (Trend Structure)
+        ema9 = float(df15['Close'].ewm(span=9).mean().iloc[-1])
+        ema20 = float(df15['Close'].ewm(span=20).mean().iloc[-1])
+        ema50 = float(df15['Close'].ewm(span=50).mean().iloc[-1])
+
+        # HH = Higher High, HL = Higher Low (Uptrend)
+        # LL = Lower Low, LH = Lower High (Downtrend)
+        is_uptrend = ema9 > ema20 > ema50 and curr > ema20  # HH/HL
+        is_downtrend = ema9 < ema20 < ema50 and curr < ema20  # LL/LH
+
+        # --- RSI (Pullback)
+        delta = df15['Close'].diff()
+        gain = delta.where(delta > 0, 0).ewm(alpha=1/14).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14).mean()
+        rs = gain / loss
+        rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+
+        # --- Support / Resistance + Breakout / Breakdown
+        # نعتبر PMH/PML هي المقاومة والدعم
+        breakdown = curr < pml and curr < orl  # Breakdown تحت PML و ORL
+        breakout = curr > pmh and curr > orh   # Breakout فوق PMH و ORH
+
+        # --- Retest (تأكيد الكسر مو كاذب)
+        # هل لمس المستوى في اخر 3 شموع ورجع
+        recent_highs = df15['High'].iloc[-4:-1]
+        recent_lows = df15['Low'].iloc[-4:-1]
+        retest_short = any(recent_highs >= pml * 0.999) and curr < pml
+        retest_long = any(recent_lows <= pmh * 1.001) and curr > pmh
+
+        # --- Consolidation Filter (ما ندخل اذا السوق عرضي)
+        atr = float((df15['High'] - df15['Low']).tail(14).mean())
+        is_consolidation = atr < (curr * 0.003)  # تذبذب اقل من 0.3%
+
+        if is_consolidation:
+            return None
+
+        # --- تجميع نقاط التأكيد (Confirmation Score)
+        # PUT Score
+        put_conditions = [
+            is_downtrend,           # 1. LL/LH
+            curr < vwap,            # 2. تحت VWAP
+            curr < pdc,             # 3. تحت اغلاق امس
+            breakdown,              # 4. Breakdown
+            retest_short,           # 5. Retest
+            rvol > 1.3,             # 6. Volume/RVOL
+            rsi < 55                # 7. Pullback
+        ]
+        put_score = sum(put_conditions)
+
+        # CALL Score
+        call_conditions = [
+            is_uptrend,             # 1. HH/HL
+            curr > vwap,            # 2. فوق VWAP
+            curr > pdc,             # 3. فوق اغلاق امس
+            breakout,               # 4. Breakout
+            retest_long,            # 5. Retest
+            rvol > 1.3,             # 6. Volume/RVOL
+            rsi > 45                # 7. Pullback
+        ]
+        call_score = sum(call_conditions)
+
+        # القرار - لازم 4 من 7 على الاقل
+        if put_score >= 4:
+            return {
+                "ticker": ticker, "dir": "PUT", "score": put_score,
+                "curr": curr, "pmh": pmh, "pml": pml, "pdh": pdh, "pdl": pdl,
+                "pdc": pdc, "orh": orh, "orl": orl, "vwap": vwap,
+                "rsi": rsi, "rvol": rvol, "ema9": ema9, "ema20": ema20, "ema50": ema50,
+                "break_type": "BREAKDOWN" if breakdown else "PULLBACK"
+            }
+        if call_score >= 4:
+            return {
+                "ticker": ticker, "dir": "CALL", "score": call_score,
+                "curr": curr, "pmh": pmh, "pml": pml, "pdh": pdh, "pdl": pdl,
+                "pdc": pdc, "orh": orh, "orl": orl, "vwap": vwap,
+                "rsi": rsi, "rvol": rvol, "ema9": ema9, "ema20": ema20, "ema50": ema50,
+                "break_type": "BREAKOUT" if breakout else "PULLBACK"
+            }
+
+        return None
+    except Exception as e:
+        print(f"[{ticker}] Stock Signal Error: {e}")
         return None
 
-st.set_page_config(layout="wide")
-st.markdown("<style>.box{background:#1e1e1e;color:#fff;padding:18px;border-radius:12px;font-family:monospace;font-size:15px;line-height:1.8;border:1px solid #333;margin-bottom:12px;white-space:pre-wrap}</style>", unsafe_allow_html=True)
+# ================== 2. فلتر الحيتان للعقود مواكب لاتجاه السهم ==================
+def get_whale_contracts_for_direction(ticker, signal):
+    try:
+        tk = yf.Ticker(ticker)
+        exps = tk.options[:4]  # اقرب 4 اسابيع
+        direction = signal['dir']
+        curr_price = signal['curr']
+        
+        all_whales = []
 
-if st.button("🚀 فحص توافق 90%+ وارسال (0.2$-4$)", use_container_width=True, type="primary"):
-    sent=0
-    for t in WATCHLIST:
-        try:
-            tk=yf.Ticker(t)
-            hist=tk.history(period="5d")
-            if hist.empty:
+        for exp in exps:
+            try:
+                chain = tk.option_chain(exp)
+                opts = chain.calls if direction == "CALL" else chain.puts
+                if opts.empty:
+                    continue
+
+                for _, row in opts.iterrows():
+                    try:
+                        bid = float(row['bid'] or 0)
+                        ask = float(row['ask'] or 0)
+                        last = float(row['lastPrice'] or 0)
+                        vol = int(row['volume'] or 0)
+                        oi = int(row['openInterest'] or 0)
+                        strike = float(row['strike'])
+
+                        price = (bid + ask) / 2 if bid and ask else last
+                        if price < MIN_PRICE or price > MAX_PRICE:
+                            continue
+                        if vol < 250 or oi < 600:
+                            continue
+                        if bid == 0 or ask == 0:
+                            continue
+
+                        spread_pct = (ask - bid) / price if price > 0 else 1
+                        if spread_pct > 0.35:  # Stop Loss - سبريد واسع
+                            continue
+
+                        # Liquidity - سيولة الحيتان
+                        premium = vol * price * 100
+                        if premium < MIN_PREMIUM:
+                            continue
+
+                        rvol_contract = vol / max(oi, 1)
+                        if rvol_contract < 0.20:
+                            continue
+
+                        # العقد لازم يكون قريب (ATM/OTM خفيف) مو بعيد
+                        # PUT: strike تحت سعر السهم بـ 0-5%
+                        # CALL: strike فوق سعر السهم بـ 0-5%
+                        if direction == "PUT":
+                            if not (curr_price * 0.92 <= strike <= curr_price * 1.02):
+                                continue
+                        else:
+                            if not (curr_price * 0.98 <= strike <= curr_price * 1.08):
+                                continue
+
+                        is_sweep = last >= ask * 0.97  # Sweep شراء ماركت
+                        is_block = premium > 150000
+
+                        # نقاط الحوت
+                        whale_score = (premium / 1000) + (vol * 0.2) + (rvol_contract * 50)
+                        if is_sweep: whale_score += 30
+                        if is_block: whale_score += 30
+
+                        all_whales.append({
+                            "score": whale_score, "exp": exp, "strike": strike,
+                            "price": price, "vol": vol, "oi": oi,
+                            "premium": premium, "is_sweep": is_sweep,
+                            "is_block": is_block, "bid": bid, "ask": ask,
+                            "rvol_c": rvol_contract
+                        })
+                    except:
+                        continue
+            except:
                 continue
-            curr=round(float(hist['Close'].iloc[-1]),2)
-            high=round(float(hist['High'].iloc[-1]),2)
-            low=round(float(hist['Low'].iloc[-1]),2)
-            direction=get_strong_direction(t)
-            if not direction:
+
+        all_whales.sort(key=lambda x: x['score'], reverse=True)
+        return all_whales[:2]  # اقوى عقدين فقط مواكبين للاتجاه
+    except Exception as e:
+        print(f"[{ticker}] Whale Error: {e}")
+        return []
+
+# ================== 3. اللوب الرئيسي ==================
+def main_loop():
+    print("🚀 Bot Started - 25 Terms + Whale Filter")
+    while True:
+        for ticker in TICKERS:
+            try:
+                signal = get_confirmed_stock_signal(ticker)
+                if not signal:
+                    continue
+
+                print(f"✅ {ticker} {signal['dir']} Score {signal['score']}/7 RVOL {signal['rvol']:.1f}x {signal['break_type']}")
+
+                whales = get_whale_contracts_for_direction(ticker, signal)
+                if not whales:
+                    print(f"   No whale contracts matching direction")
+                    continue
+
+                for w in whales:
+                    dir_emoji = "🔴 PUT" if signal['dir'] == "PUT" else "🟢 CALL"
+                    setup_type = "🔥 A+ SETUP" if signal['score'] >= 6 else "✅ CONFIRMED"
+                    sweep_txt = "🔥 SWEEP" if w['is_sweep'] else "🐳 BLOCK" if w['is_block'] else "🐳 WHALE"
+
+                    msg = f"""{dir_emoji} {ticker} {setup_type}
+💰 {w['strike']} {w['exp']} @ ${w['price']:.2f} {sweep_txt}
+
+📊 STOCK 25-TERMS:
+Price: ${signal['curr']:.2f} | {signal['break_type']}
+PML: ${signal['pml']:.2f} | PMH: ${signal['pmh']:.2f} | PDC: ${signal['pdc']:.2f}
+PDL: ${signal['pdl']:.2f} | PDH: ${signal['pdh']:.2f}
+ORL: ${signal['orl']:.2f} | ORH: ${signal['orh']:.2f}
+VWAP: ${signal['vwap']:.2f} | RSI: {signal['rsi']:.0f} | RVOL: {signal['rvol']:.1f}x
+EMA: {signal['ema9']:.2f}/{signal['ema20']:.2f}/{signal['ema50']:.2f} | Score: {signal['score']}/7
+
+🐳 WHALE CONTRACT:
+Vol: {w['vol']} | OI: {w['oi']} | RVOL: {w['rvol_c']:.2f}x
+Premium: ${w['premium']:,.0f} | Bid/Ask: {w['bid']:.2f}/{w['ask']:.2f}
+Entry: ${w['price']:.2f} Range {MIN_PRICE}-{MAX_PRICE}"""
+
+                    send_telegram(msg)
+                    time.sleep(2)
+
+            except Exception as e:
+                print(f"Loop {ticker} error: {e}")
                 continue
-            exp=tk.options[0] if tk.options else None
-            if not exp:
-                continue
-            dte=(datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
-            if dte<0 and len(tk.options)>1:
-                exp=tk.options[1]
-                dte=(datetime.strptime(exp, "%Y-%m-%d").date() - date.today()).days
-            if not (0 <= dte <= 7):
-                continue
-            chain=tk.option_chain(exp)
-            opts=chain.calls if direction=="CALL" else chain.puts
-            row=opts.iloc[(opts['strike']-curr).abs().argsort()[:1]].iloc[0]
-            bid=float(row['bid'] or 0)
-            ask=float(row['ask'] or 0)
-            entry=round((bid+ask)/2,2) if bid>0 and ask>0 else round(float(row.get('lastPrice',0) or 0),2)
-            if entry < 0.20 or entry > 4.00:
-                continue
-            if bid>0 and ask>0 and (ask-bid)/entry > 0.40:
-                continue
-            strike=float(row['strike'])
-            strike_s=int(strike) if strike==int(strike) else strike
-            ft1,ft2,ft3=get_fibo(high, low, direction)
-            now_p=get_now_fast(t, exp, strike, direction) or entry
-            pnl=(now_p-entry)/entry*100 if entry else 0
-            emoji="🟢" if direction=="CALL" else "🔴"
-            txt=f"{emoji} {t} {strike_s} {direction} 🐳\nExp: {exp} ({dte}d) Stock: ${curr:.2f}\nEntry: ${entry:.2f} Bid: ${bid:.2f}\nStop: ${entry*0.5:.2f}\nTarget: ${entry*1.5:.2f} (+50%) | ${entry*2.3:.2f} (+130%) | ${entry*3.2:.2f} (+220%)\nTarget Stock: {ft1} > {ft2} > {ft3} (Fibo)\nNow: ${now_p:.2f} | {pnl:+.1f}% شغال\n{datetime.now().strftime('%H:%M:%S')}"
-            st.markdown(f'<div class="box">{txt}</div>', unsafe_allow_html=True)
-            fpath=os.path.join(BASE, f"{date.today()}.json")
-            data=json.load(open(fpath, encoding='utf-8')) if os.path.exists(fpath) else []
-            key=f"{t}_{strike}_{direction}_{exp}"
-            if not any(d.get('key')==key for d in data):
-                data.append({"key":key,"ticker":t,"strike":strike,"dir":direction,"exp":exp,"entry":entry,"high":high,"low":low,"text":txt})
-                json.dump(data, open(fpath,"w",encoding='utf-8'), ensure_ascii=False, indent=2)
-            if send(txt):
-                sent+=1
-            time.sleep(1)
-        except:
-            continue
-    st.success(f"تم ارسال {sent} عقد")
+
+        print(f"--- Scan done {datetime.now().strftime('%H:%M:%S')} sleeping {SCAN_INTERVAL}s ---")
+        time.sleep(SCAN_INTERVAL)
+
+if __name__ == "__main__":
+    main_loop()
