@@ -12,7 +12,7 @@ def send(msg):
     try:
         r=requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={'chat_id':CHAT_ID,'text':msg}, timeout=20)
-        return r.json().get('ok', False)
+        return r.status_code==200
     except:
         return False
 
@@ -55,7 +55,7 @@ def get_day_range(ticker):
 st.set_page_config(layout="wide")
 st.markdown("""<style>.box{background:#1e1e1e;color:#fff;padding:18px;border-radius:12px;font-family:monospace;font-size:15px;line-height:1.8;border:1px solid #333;margin-bottom:12px;white-space:pre-wrap}</style>""", unsafe_allow_html=True)
 
-st.title("V99 - الاستايل المتفق عليه")
+st.title("V99 - الاصلي")
 
 if st.button("🚀 فحص اليوم وحفظ وارسال تيليجرام", use_container_width=True):
     for t in WATCHLIST:
@@ -124,58 +124,38 @@ if st.button("🚀 فحص اليوم وحفظ وارسال تيليجرام", us
                 data.append({"key":key,"ticker":t,"strike":strike,"dir":direction,"exp":exp,"entry":entry,"high":high,"low":low,"text":txt})
                 json.dump(data, open(fpath,"w",encoding='utf-8'), ensure_ascii=False, indent=2)
 
-            if send(txt):
-                st.caption(f"✅ {t}")
-            else:
-                st.caption(f"❌ فشل {t}")
+            send(txt)
             time.sleep(1.5)
 
         except Exception as e:
             st.error(f"{t}: {e}")
 
 st.divider()
-st.subheader("📂 الارشيف - تحديث مباشر")
+st.subheader("📂 الارشيف")
 files=sorted(os.listdir(BASE), reverse=True)
 days=[f.replace(".json","") for f in files]
 sel=st.selectbox("اختر اليوم", days if days else ["لا يوجد"])
-
 if sel!="لا يوجد":
-    if st.button("🔄 تحديث الان كل العقود", use_container_width=True):
-        st.rerun()
-
+    if st.button("🔄 تحديث الان"): st.rerun()
     data=json.load(open(os.path.join(BASE,f"{sel}.json"), encoding='utf-8'))
     for i,c in enumerate(data):
         high=c.get('high',0); low=c.get('low',0)
         if high==0 or low==0:
             try:
                 m=re.search(r"Range: \$(.*?) - \$(.*?)\n", c['text'])
-                if m:
-                    low=float(m.group(1)); high=float(m.group(2))
+                if m: low=float(m.group(1)); high=float(m.group(2))
             except: pass
-            if high==0: high,low=get_day_range(c['ticker'])
-
         now_p=get_now(c['ticker'], c['exp'], c['strike'], c['dir']) or c.get('entry',0)
-        entry=c.get('entry',now_p)
-        pnl=(now_p-entry)/entry*100 if entry else 0
+        entry=c.get('entry',now_p); pnl=(now_p-entry)/entry*100 if entry else 0
         ft1,ft2,ft3=get_fibo(high, low, c['dir'])
-
         if now_p<=entry*0.5: stt=f"🔴 وقف {pnl:+.1f}%"
         elif now_p>=entry*3.2: stt=f"🟢 هدف 3 {pnl:+.1f}%"
         elif now_p>=entry*2.3: stt=f"🟢 هدف 2 {pnl:+.1f}%"
         elif now_p>=entry*1.5: stt=f"🟢 هدف 1 {pnl:+.1f}%"
         else: stt=f"⚪ شغال {pnl:+.1f}%"
-
         base="\n".join([l for l in c['text'].split("\n") if not l.startswith("Target Stock:") and not l.startswith("Now:")])
         updated=f"{base}\nTarget Stock: {ft1:.2f} > {ft2:.2f} > {ft3:.2f} (Fibo)\nNow: ${now_p:.2f} | {stt} | {datetime.now().strftime('%H:%M:%S')}"
-
         st.markdown(f'<div class="box">{updated}</div>', unsafe_allow_html=True)
-        c1,c2=st.columns(2)
-        with c1:
-            if st.button(f"🔄 تحديث {c['ticker']}", key=f"u_{sel}_{i}"):
-                st.rerun()
-        with c2:
-            if st.button(f"📨 ارسال {c['ticker']}", key=f"s_{sel}_{i}"):
-                if send(updated):
-                    st.success("تم الارسال")
-                else:
-                    st.error("فشل الارسال - اضغط /start للبوت")
+        if st.button(f"🔄 {c['ticker']}", key=f"u_{sel}_{i}"): st.rerun()
+        if st.button(f"📨 {c['ticker']}", key=f"s_{sel}_{i}"):
+            send(updated)
