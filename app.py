@@ -1,4 +1,4 @@
-import streamlit as st, yfinance as yf, requests, json, os, time, re
+import streamlit as st, yfinance as yf, requests, json, os, time
 from datetime import datetime, date
 
 BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
@@ -9,20 +9,18 @@ WATCHLIST=["SPY","QQQ","AAPL","META","NVDA","TSLA","AMD","HOOD","COIN","SOFI"]
 
 def send(msg):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={'chat_id':CHAT_ID,'text':msg}, timeout=15)
+        print(r.text)
         return True
-    except:
+    except Exception as e:
+        print(e)
         return False
 
 def today_file(): return os.path.join(BASE, f"{date.today()}.json")
 
 def get_fibo(high, low, direction):
-    try:
-        high=float(high); low=float(low)
-    except:
-        high=low=0
-    diff=high-low
+    diff = float(high)-float(low) if high and low else 1.0
     if diff<=0: diff=1.0
     if direction=="PUT":
         return round(low-diff*0.382,2), round(low-diff*0.618,2), round(low-diff*1.0,2)
@@ -46,6 +44,7 @@ st.set_page_config(layout="wide")
 st.markdown("""<style>.box{background:#1e1e1e;color:#fff;padding:18px;border-radius:12px;font-family:monospace;font-size:15px;line-height:1.8;border:1px solid #333;margin-bottom:12px;white-space:pre-wrap}</style>""", unsafe_allow_html=True)
 
 if st.button("🚀 فحص وارسال تلقائي للتيليجرام", use_container_width=True, type="primary"):
+    sent = 0
     for t in WATCHLIST:
         try:
             tk=yf.Ticker(t)
@@ -83,78 +82,44 @@ if st.button("🚀 فحص وارسال تلقائي للتيليجرام", use_c
 
             st.markdown(f'<div class="box">{txt}</div>', unsafe_allow_html=True)
 
+            # حفظ فقط اذا جديد - لكن الارسال دائما
             fpath=today_file()
             data=json.load(open(fpath, encoding='utf-8')) if os.path.exists(fpath) else []
             key=f"{t}_{strike}_{direction}_{exp}"
             if not any(d.get('key')==key for d in data):
                 data.append({"key":key,"ticker":t,"strike":strike,"dir":direction,"exp":exp,"entry":entry,"high":high,"low":low,"text":txt})
                 json.dump(data, open(fpath,"w",encoding='utf-8'), ensure_ascii=False, indent=2)
-                send(txt)
-                st.success(f"تم ارسال {t}")
 
-            time.sleep(1)
+            # ارسال دائما - حتى لو موجود اليوم
+            if send(txt):
+                sent += 1
+                st.toast(f"✅ ارسل {t}")
+
+            time.sleep(1.2)
         except Exception as e:
             st.error(f"{t}: {e}")
 
+    st.success(f"تم ارسال {sent} عقد للتيليجرام")
+
 st.divider()
 st.subheader("الأرشيف")
-
 files=sorted([f for f in os.listdir(BASE) if f.endswith(".json")], reverse=True)
-if not files:
-    st.write("لا يوجد")
-else:
+if files:
     sel=st.selectbox("اختر اليوم", [f.replace(".json","") for f in files])
-    fpath=os.path.join(BASE, f"{sel}.json")
-    try:
-        raw=open(fpath, encoding='utf-8').read()
-        data=json.loads(raw)
-    except:
-        data=[]
-
     if st.button("🔄 تحديث سريع"):
         get_now_fast.clear()
         st.rerun()
-
+    data=json.load(open(os.path.join(BASE,f"{sel}.json"), encoding='utf-8'))
     for i,c in enumerate(data):
         try:
-            # قراءة آمنة - ما يعلق لو الملف قديم
             high=c.get('high',0); low=c.get('low',0)
-            if high==0 or low==0:
-                m=re.search(r"Range:.*?\$(.*?) - \$(.*?)\n", c.get('text',''))
-                if m:
-                    try:
-                        low=float(m.group(1)); high=float(m.group(2))
-                    except: pass
-
-            # لو لسه صفر جيبه من ياهو
-            if high==0 or low==0:
-                try:
-                    tk=yf.Ticker(c.get('ticker','SPY'))
-                    h=tk.history(period="1d")
-                    high=round(float(h['High'].iloc[-1]),2); low=round(float(h['Low'].iloc[-1]),2)
-                except:
-                    high=low=0
-
-            entry=c.get('entry',0)
-            exp=c.get('exp',''); strike=c.get('strike',0); direction=c.get('dir','CALL')
+            entry=c.get('entry',0); exp=c.get('exp',''); strike=c.get('strike',0); direction=c.get('dir','CALL')
             now_p=get_now_fast(c.get('ticker',''), exp, strike, direction) or entry
-            pnl=(now_p-entry)/entry*100 if entry else 0
-            ft1,ft2,ft3=get_fibo(high, low, direction)
-
-            base_txt=c.get('text','').split("Target Stock:")[0] if "Target Stock:" in c.get('text','') else c.get('text','')
-            updated=f"{base_txt}Target Stock: {ft1} > {ft2} > {ft3} (Fibo)\nNow: ${now_p} | {pnl:+.1f}% | {datetime.now().strftime('%H:%M:%S')}"
-
+            ft1,ft2,ft3=get_fibo(high or 100, low or 99, direction)
+            base=c.get('text','').split("Target Stock:")[0]
+            updated=f"{base}Target Stock: {ft1} > {ft2} > {ft3} (Fibo)\nNow: ${now_p} | {(now_p-entry)/entry*100 if entry else 0:+.1f}% | {datetime.now().strftime('%H:%M:%S')}"
             st.markdown(f'<div class="box">{updated}</div>', unsafe_allow_html=True)
-
-            c1,c2=st.columns(2)
-            with c1:
-                if st.button(f"🔄 {c.get('ticker','')}", key=f"u_{sel}_{i}"):
-                    get_now_fast.clear()
-                    st.rerun()
-            with c2:
-                if st.button(f"📨 {c.get('ticker','')}", key=f"s_{sel}_{i}"):
-                    send(updated)
-                    st.toast("تم الارسال")
-        except Exception as e:
-            st.warning(f"تخطي عقد تالف {i}: {e}")
-            continue
+            if st.button(f"📨 {c.get('ticker','')}", key=f"s_{sel}_{i}"):
+                send(updated)
+                st.success("تم")
+        except: continue
