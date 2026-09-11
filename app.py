@@ -3,18 +3,18 @@ import pandas as pd
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-st.title("🐳 بوت مبكر - سعر حقيقي")
+st.title("Whale Early Bot - Real Price")
 
 BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
 def send(msg):
-    if not BOT_TOKEN or not CHAT_ID: 
+    if not BOT_TOKEN or not CHAT_ID:
         return False
     try:
         r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=10)
         return r.status_code==200
-    except: 
+    except:
         return False
 
 def get_real_price(ticker):
@@ -45,30 +45,23 @@ def get_early_signal(ticker, tf="15m"):
         real_price = get_real_price(ticker)
         if not real_price:
             return None, None
-        
         df = tk.history(period="5d", interval=tf, auto_adjust=False)
         if df.empty or len(df) < 30:
             return None, None
-        
         recent_high = float(df['High'].iloc[-20:].max())
         recent_low = float(df['Low'].iloc[-20:].min())
-        
         delta = df['Close'].diff()
         gain = delta.where(delta>0,0).rolling(14).mean()
         loss = -delta.where(delta<0,0).rolling(14).mean()
         rsi = 100 - (100/(1+gain/loss.replace(0,0.001)))
         rsi_now = float(rsi.iloc[-1])
         rsi_prev = float(rsi.iloc[-2])
-        
         vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
         vol_now = df['Volume'].iloc[-1]
         vol_ratio = float(vol_now/vol_avg) if vol_avg else 1.0
-        
         near_high = real_price >= recent_high * 0.995
         near_low = real_price <= recent_low * 1.005
-        
         info = {"curr":real_price, "rh":recent_high, "rl":recent_low, "rsi":rsi_now, "rsi_prev":rsi_prev, "vol":vol_ratio}
-        
         if near_high and rsi_now > rsi_prev and rsi_now > 45:
             return "CALL", info
         if near_low and rsi_now < rsi_prev and rsi_now < 55:
@@ -77,96 +70,32 @@ def get_early_signal(ticker, tf="15m"):
             return "CALL", info
         if rsi_now > 68 and rsi_now < rsi_prev:
             return "PUT", info
-            
         return None, info
     except Exception as e:
         return None, {"error":str(e)}
 
-tf = st.selectbox("الفريم", ["5m","15m","30m","1h","1d"], index=1)
-watch = st.text_area("الأسهم", "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL")
+tf = st.selectbox("Timeframe", ["5m","15m","30m","1h","1d"], index=1)
+watch = st.text_area("Tickers", "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL")
 WATCHLIST = [x.strip().upper() for x in watch.split(",") if x.strip()]
 
-if st.button("🚀 فحص مبكر - سعر حقيقي", use_container_width=True, type="primary"):
-    st.subheader("الأسعار الحقيقية الآن:")
+if st.button("RUN EARLY SCAN", use_container_width=True, type="primary"):
+    st.subheader("Real Prices Now:")
     for t in WATCHLIST:
         real = get_real_price(t)
         sig, info = get_early_signal(t, tf)
         if real is None:
-            st.warning(f"❌ {t}: لا سعر")
+            st.warning(f"{t}: no price")
             continue
-        
         if sig:
-            emoji = "🟢" if sig=="CALL" else "🔴"
-            txt = f"{emoji} {t} {sig} [مبكر] | ${real:.2f} | RSI:{info['rsi']:.1f} | قمة:{info['rh']:.2f} قاع:{info['rl']:.2f} | {tf}"
+            emoji = "CALL" if sig=="CALL" else "PUT"
+            txt = f"{emoji} {t} {sig} EARLY | ${real:.2f} | RSI:{info['rsi']:.1f} | High:{info['rh']:.2f} Low:{info['rl']:.2f} | {tf}"
             st.code(txt)
             send(txt)
         else:
             if info and "rsi" in info:
-                arrow = "↗" if info['rsi'] > info['rsi_prev'] else "↘"
-                st.write(f"⚪ {t} ${real:.2f} | قمة:{info['rh']:.2f} قاع:{info['rl']:.2f} | RSI:{info['rsi']:.1f} {arrow}")
+                arrow = "UP" if info['rsi'] > info['rsi_prev'] else "DOWN"
+                st.write(f"{t} ${real:.2f} | High:{info['rh']:.2f} Low:{info['rl']:.2f} | RSI:{info['rsi']:.1f} {arrow}")
             else:
-                st.write(f"⚪ {t} ${real:.2f} | محايد")
+                st.write(f"{t} ${real:.2f} | neutral")
 
-st.caption("منطق مبكر: اختراق قمة/قاع 20 شمعة + RSI - يسبق EMA")        if not real_price:
-            return None, None
-        
-        df = tk.history(period="5d", interval=tf, auto_adjust=False)
-        if df.empty or len(df) < 30:
-            return None, None
-        
-        # نستخدم السعر الحقيقي للمقارنة
-        recent_high = float(df['High'].iloc[-20:].max())
-        recent_low = float(df['Low'].iloc[-20:].min())
-        
-        delta = df['Close'].diff()
-        gain = delta.where(delta>0,0).rolling(14).mean()
-        loss = -delta.where(delta<0,0).rolling(14).mean()
-        rsi = 100 - (100/(1+gain/loss.replace(0,0.001)))
-        rsi_now = float(rsi.iloc[-1])
-        rsi_prev = float(rsi.iloc[-2])
-        
-        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-        vol_now = df['Volume'].iloc[-1]
-        
-        # قرب القمة/القاع بالنسبة للسعر الحقيقي
-        near_high = real_price >= recent_high * 0.995
-        near_low = real_price <= recent_low * 1.005
-        
-        info = {"curr":real_price, "rh":recent_high, "rl":recent_low, "rsi":rsi_now, "rsi_prev":rsi_prev, "vol":vol_now/vol_avg if vol_avg else 1}
-        
-        # إشارة مبكرة حقيقية
-        if near_high and rsi_now > rsi_prev and rsi_now > 45:
-            return "CALL", info
-        if near_low and rsi_now < rsi_prev and rsi_now < 55:
-            return "PUT", info
-        # ارتداد
-        if rsi_now < 32 and rsi_now > rsi_prev:
-            return "CALL", info
-        if rsi_now > 68 and rsi_now < rsi_prev:
-            return "PUT", info
-            
-        return None, info
-    except Exception as e:
-        return None, {"error":str(e)}
-
-tf = st.selectbox("الفريم", ["5m","15m","30m","1h","1d"], index=1)
-watch = st.text_area("الأسهم", "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL")
-WATCHLIST = [x.strip().upper() for x in watch.split(",") if x.strip()]
-
-if st.button("🚀 فحص مبكر - سعر حقيقي", use_container_width=True, type="primary"):
-    st.write("الأسعار الحقيقية الآن:")
-    for t in WATCHLIST:
-        real = get_real_price(t)
-        sig, info = get_early_signal(t, tf)
-        if real:
-            st.write(f"**{t}**: ${real:.2f}", end=" | ")
-            if sig:
-                emoji = "🟢" if sig=="CALL" else "🔴"
-                txt = f"{emoji} {t} {sig} [مبكر] | ${real:.2f} | RSI:{info['rsi']:.1f} | قمة:{info['rh']:.2f} قاع:{info['rl']:.2f} | {tf}"
-                st.code(txt)
-                send(txt)
-            else:
-                if info:
-                    st.write(f"محايد RSI:{info['rsi']:.1f}")
-        else:
-            st.write(f"❌ {t}: لا سعر")
+st.caption("Early logic: breakout 20-bar high/low + RSI - before EMA cross")
