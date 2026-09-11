@@ -2,7 +2,7 @@ import streamlit as st, yfinance as yf, requests
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("Whale Bot - Fixed Price")
+st.title("Whale Bot - Signals Only")
 
 BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
@@ -13,92 +13,68 @@ def send(m):
             requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':m}, timeout=8)
     except: pass
 
-def get_price_fixed(t):
+@st.cache_data(ttl=60)
+def get_true_price(t):
+    try:
+        # مصدر جديد ما يتأثر بالكاش المضروب - ناخذ اخر يومين يومي
+        df = yf.download(t, period="2d", interval="1d", auto_adjust=True, progress=False)
+        if not df.empty:
+            return float(df['Close'].iloc[-1])
+    except: pass
     try:
         tk = yf.Ticker(t)
-        # جرب 3 مصادر وخذ الاصغر المنطقي
-        prices = []
-        try:
-            p = tk.fast_info.get('last_price')
-            if p and 10 < p < 3000: prices.append(float(p))
-        except: pass
-        try:
-            df1 = tk.history(period="1d", interval="1d", auto_adjust=False)
-            if not df1.empty:
-                prices.append(float(df1['Close'].iloc[-1]))
-        except: pass
-        try:
-            info = tk.info
-            p = info.get('currentPrice') or info.get('regularMarketPrice')
-            if p and 10 < p < 3000: prices.append(float(p))
-        except: pass
-        if not prices:
-            return None
-        # خذ الوسيط عشان لو واحد مضروب 765 ينحذف
-        prices.sort()
-        return prices[len(prices)//2]
+        return float(tk.fast_info['last_price'])
     except:
         return None
 
-def get_signal(t, tf):
-    price = get_price_fixed(t)
-    if not price: return None, None
+def scan(t, tf):
+    price = get_true_price(t)
+    if not price:
+        return None
     try:
-        df = yf.Ticker(t).history(period="10d", interval=tf, auto_adjust=False)
-        if len(df) < 30: return None, None
-        e9 = df['Close'].ewm(9).mean().iloc[-1]
-        e20 = df['Close'].ewm(20).mean().iloc[-1]
-        e50 = df['Close'].ewm(50).mean().iloc[-1]
-        delta = df['Close'].diff()
+        df = yf.download(t, period="10d", interval=tf, auto_adjust=True, progress=False)
+        if len(df) < 30:
+            return None
+        close = df['Close']
+        e9 = close.ewm(9).mean().iloc[-1]
+        e20 = close.ewm(20).mean().iloc[-1]
+        delta = close.diff()
         gain = delta.where(delta>0,0).rolling(14).mean()
         loss = -delta.where(delta<0,0).rolling(14).mean()
-        rs = gain/loss.replace(0,0.001)
-        rsi = 100 - (100/(1+rs))
+        rsi = 100 - (100/(1+gain/loss.replace(0,0.0001)))
         r = float(rsi.iloc[-1])
         r_prev = float(rsi.iloc[-2])
-        rh = float(df['High'].iloc[-20:].max())
-        rl = float(df['Low'].iloc[-20:].min())
-        vol = df['Volume'].iloc[-1] / df['Volume'].rolling(20).mean().iloc[-1]
+        vol = float(df['Volume'].iloc[-1] / df['Volume'].rolling(20).mean().iloc[-1])
 
-        # منطق متوازن CALL و PUT
-        call_cond = (price > e9 > e20) and (r > 55) and (r > r_prev) and (price < rh*1.01)
-        put_cond = (price < e9 < e20) and (r < 45) and (r < r_prev) and (price > rl*0.99)
-        # مناطق تشبع تعطي PUT حتى لو صاعد
-        overbought_put = r > 78 and r < r_prev
-        oversold_call = r < 22 and r > r_prev
+        is_call = (price > e9 > e20 and r > 55 and r > r_prev and vol > 1.1)
+        is_put = (price < e9 < e20 and r < 45 and r < r_prev) or (r > 75 and r < r_prev) or (r < 25 and r > r_prev)
 
-        info = (price, e9, e20, r, r_prev, rh, rl, vol)
-        if oversold_call or call_cond:
-            return "CALL", info
-        if overbought_put or put_cond:
-            return "PUT", info
-        return None, info
+        if is_call:
+            return ("CALL", price, r, e9, e20, vol)
+        if is_put:
+            return ("PUT", price, r, e9, e20, vol)
+        return None
     except:
-        return None, None
+        return None
 
 tf = st.selectbox("الفريم", ["5m","15m","30m","1h","1d"], index=1)
-default_list = "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL,AMZN,NFLX,PLTR,BA,SHOP,UBER"
-watch = st.text_area("الشركات", default_list, height=80)
+default_list = "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL,AMZN,NFLX,PLTR,SHOP,UBER,BA"
+watch = st.text_area("القائمة", default_list, height=80)
 WL = [x.strip().upper() for x in watch.split(",") if x.strip()]
 
-if st.button("RUN SCAN", use_container_width=True, type="primary"):
-    calls = 0
-    puts = 0
+if st.button("RUN SCAN - ONLY SIGNALS", use_container_width=True, type="primary"):
+    st.cache_data.clear()
+    found = []
     for t in WL:
-        sig, info = get_signal(t, tf)
-        if not info:
-            st.write(f"{t} no data")
-            continue
-        price, e9, e20, r, r_prev, rh, rl, vol = info
-        if sig:
-            tag = "CALL" if sig=="CALL" else "PUT"
-            if sig=="CALL": calls+=1
-            else: puts+=1
-            txt = f"{t} {tag} | ${price:.2f} | RSI {r:.1f} | EMA9 {e9:.1f} EMA20 {e20:.1f} | Vol x{vol:.1f} | {tf}"
+        res = scan(t, tf)
+        if res:
+            sig, price, r, e9, e20, vol = res
+            found.append(res)
+            color = "CALL" if sig=="CALL" else "PUT"
+            txt = f"{t} {color} | ${price:.2f} | RSI {r:.1f} | EMA9 {e9:.1f} EMA20 {e20:.1f} | Vol x{vol:.1f} | {tf}"
             st.code(txt)
             send(txt)
-        else:
-            st.write(f"{t} ${price:.2f} | RSI {r:.1f} | EMA9 {e9:.1f}")
-    st.success(f"Total: {calls} CALL / {puts} PUT من {len(WL)} شركة")
-
-st.caption("Fixed: median price from 3 sources + balanced CALL/PUT + 20 companies")
+    if not found:
+        st.warning(f"لا يوجد اشارات مطابقة الان في {tf} - السوق هادي")
+    else:
+        st.success(f"تم العثور على {len(found)} اشارة فقط")
