@@ -1,78 +1,99 @@
-import streamlit as st, yfinance as yf, requests
+import streamlit as st, yfinance as yf, requests, pandas as pd
+from datetime import datetime
 
-st.set_page_config(layout="wide")
-st.title("Whale Bot - Filtered + True Price")
+st.set_page_config(layout="wide", page_title="Whale Bot")
+st.markdown("<style>.stApp{background:#0a0e14;color:white} div[data-testid='stCode']{background:#111827;border-left:4px solid #00ff88;border-radius:10px} h1{color:#00ff88}</style>", unsafe_allow_html=True)
+st.title("Whale Bot - Early")
 
 BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
-def send(m):
+def send(msg):
+    if not BOT_TOKEN or not CHAT_ID:
+        return False
     try:
-        if BOT_TOKEN and CHAT_ID:
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':m}, timeout=8)
-    except: pass
+        r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=10)
+        return r.status_code==200
+    except:
+        return False
 
-def get_true_data(t, tf):
+def get_price(ticker):
     try:
-        tk = yf.Ticker(t)
-        # السعر الحقيقي
-        try:
-            true_price = float(tk.fast_info['last_price'])
-        except:
-            true_price = float((tk.info.get('currentPrice') or tk.info.get('regularMarketPrice') or 0))
-        
-        df = yf.download(t, period="60d", interval=tf, auto_adjust=True, progress=False, threads=False)
-        if df.empty: return None
-        c = df['Close']
-        if hasattr(c, 'columns'): c = c.iloc[:,0]
-        c = c.dropna()
-        if len(c) < 20: return None
-        
-        # تصحيح التضخم: لو السعر الحقيقي اصغر من سعر الهيستوري بـ 10% نصحح
-        hist_price = float(c.iloc[-1])
-        if true_price and true_price > 10 and abs(hist_price - true_price) / true_price > 0.08:
-            ratio = true_price / hist_price
-            c = c * ratio
-            hist_price = true_price
-        
-        e9 = c.ewm(9).mean().iloc[-1]
-        e20 = c.ewm(20).mean().iloc[-1]
-        e50 = c.ewm(50).mean().iloc[-1]
-        
-        delta = c.diff()
+        tk = yf.Ticker(ticker)
+        df = tk.history(period="1d", interval="1m", auto_adjust=True)
+        if not df.empty:
+            return float(df['Close'].iloc[-1]), df
+        df = tk.history(period="5d", interval="5m", auto_adjust=True)
+        if not df.empty:
+            return float(df['Close'].iloc[-1]), df
+        return None, None
+    except:
+        return None, None
+
+def get_signal(ticker, tf):
+    try:
+        price, _ = get_price(ticker)
+        if not price:
+            return None, None
+        tk = yf.Ticker(ticker)
+        df = tk.history(period="5d", interval=tf, auto_adjust=True)
+        if df.empty or len(df) < 25:
+            return None, None
+        last = float(df['Close'].iloc[-1])
+        if abs(last - price) / price > 0.15:
+            factor = price / last
+            df['Close'] = df['Close'] * factor
+            df['High'] = df['High'] * factor
+            df['Low'] = df['Low'] * factor
+        ema9 = df['Close'].ewm(span=9).mean()
+        ema20 = df['Close'].ewm(span=20).mean()
+        e9 = float(ema9.iloc[-1])
+        e20 = float(ema20.iloc[-1])
+        e9p = float(ema9.iloc[-2])
+        e20p = float(ema20.iloc[-2])
+        delta = df['Close'].diff()
         gain = delta.where(delta>0,0).rolling(14).mean()
         loss = -delta.where(delta<0,0).rolling(14).mean()
-        rsi = 100 - (100/(1+gain/loss.replace(0,0.0001)))
-        r = float(rsi.iloc[-1])
-        rp = float(rsi.iloc[-2])
-        
-        return {"price":hist_price, "e9":float(e9), "e20":float(e20), "e50":float(e50), "rsi":r, "rsi_prev":rp, "close":c}
+        rsi = 100 - (100/(1+gain/loss.replace(0,0.001)))
+        rsi_now = float(rsi.iloc[-1])
+        rsi_prev = float(rsi.iloc[-2])
+        rh = float(df['High'].iloc[-20:].max())
+        rl = float(df['Low'].iloc[-20:].min())
+        dist = abs(e9 - e20) / e20 * 100
+        early_call = (e9 > e20p and dist < 0.5 and rsi_now > rsi_prev) or (price >= rh*0.998 and rsi_now > 50)
+        early_put = (e9 < e20p and dist < 0.5 and rsi_now < rsi_prev) or (price <= rl*1.002 and rsi_now < 50)
+        info = {"curr":price,"ema9":e9,"ema20":e20,"rsi":rsi_now,"rsi_prev":rsi_prev,"rh":rh,"rl":rl,"dist":dist}
+        if early_call:
+            return "CALL", info
+        if early_put:
+            return "PUT", info
+        if e9 > e20 and rsi_now > 50:
+            return "CALL", info
+        if e9 < e20 and rsi_now < 50:
+            return "PUT", info
+        return None, info
     except:
-        return None
+        return None, None
 
-tf = st.selectbox("الفريم", ["5m","15m","30m","1h","1d"], index=2)
-WL = [x.strip().upper() for x in st.text_area("القائمة","SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL,AMZN,NFLX,PLTR,SHOP,UBER,BA", height=80).split(",")]
+tf = st.selectbox("Timeframe", ["5m","15m","30m","1h","1d"], index=1)
+watch = st.text_area("Tickers", "SPY,QQQ,AAPL,META,NVDA,TSLA,AMD,HOOD,COIN,SOFI,ORCL,NVO,MSFT,GOOGL")
+WATCHLIST = [x.strip().upper() for x in watch.split(",") if x.strip()]
 
-if st.button(f"RUN SCAN {tf} - FILTERED ONLY", use_container_width=True, type="primary"):
-    found = 0
-    for t in WL:
-        d = get_true_data(t, tf)
-        if not d: continue
-        
-        price, e9, e20, e50, r, rp = d['price'], d['e9'], d['e20'], d['e50'], d['rsi'], d['rsi_prev']
-        
-        # فلتر قوي - يطلع 2-5 فقط
-        strong_call = price > e9 > e20 > e50 and 57 < r < 78 and r > rp and price > d['close'].rolling(20).mean().iloc[-1]
-        strong_put = price < e9 < e20 < e50 and 22 < r < 43 and r < rp
-        
-        if strong_call:
-            txt = f"{t} CALL STRONG | ${price:.2f} | RSI {r:.1f} | EMA9 {e9:.2f}>{e20:.2f}>{e50:.2f} | {tf}"
-            st.code(txt); send(txt); found+=1
-        elif strong_put:
-            txt = f"{t} PUT STRONG | ${price:.2f} | RSI {r:.1f} | EMA9 {e9:.2f}<{e20:.2f}<{e50:.2f} | {tf}"
-            st.code(txt); send(txt); found+=1
-    
-    if found == 0:
-        st.warning(f"لا يوجد اشارة STRONG في {tf} - جرب فريم 15m او 1d")
-    else:
-        st.success(f"تم العثور على {found} فقط من {len(WL)} - هذي الفلترة الحقيقية")
+if st.button("RUN SCAN", use_container_width=True, type="primary"):
+    for t in WATCHLIST:
+        sig, info = get_signal(t, tf)
+        if not info:
+            st.write(f"{t} no data")
+            continue
+        price = info['curr']
+        rsi = info['rsi']
+        arrow = "UP" if rsi > info['rsi_prev'] else "DOWN"
+        tag = "EARLY" if info['dist'] < 0.5 else ""
+        if sig:
+            txt = f"{t} {sig} {tag} | ${price:.2f} | RSI {rsi:.1f} {arrow} | EMA9 {info['ema9']:.2f} EMA20 {info['ema20']:.2f} | H {info['rh']:.2f} L {info['rl']:.2f} | {tf}"
+            st.code(txt)
+            send(txt)
+        else:
+            st.write(f"{t} ${price:.2f} | H {info['rh']:.2f} L {info['rl']:.2f} | RSI {rsi:.1f} {arrow} | EMA9 {info['ema9']:.2f} EMA20 {info['ema20']:.2f}")
+
+st.write("Fixed price from 1m chart")
