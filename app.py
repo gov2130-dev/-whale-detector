@@ -1,4 +1,4 @@
-ابوراكان:
+
 import streamlit as st, yfinance as yf, requests, json, os, time
 import pandas as pd
 from datetime import datetime, date
