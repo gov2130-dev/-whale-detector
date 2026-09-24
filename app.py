@@ -9,7 +9,7 @@ BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
 def send(msg):
-    if not BOT_TOKEN or not CHAT_ID:
+    if not BOT_TOKEN or not @v68_golden_555371577_bot:
         return False
     try:
         r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={'chat_id':CHAT_ID,'text':msg}, timeout=10)
