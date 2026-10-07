@@ -11,7 +11,7 @@ import pytz
 st.set_page_config(page_title="حيتان أبو راكان V93 FINAL - GOLDEN UNDER $4", layout="wide")
 
 # Secrets - هذا هو التصحيح للخطأ اللي في صورتك
-BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
+BOT_TOKEN = st.secrets.get(8594574378:AAGvyWArz9poRIKSddY9c6S6479Uo2Uj1Xg)
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 BOT_USERNAME = "@v68_golden_555371577_bot"
 
