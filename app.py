@@ -1,69 +1,69 @@
-import streamlit as st
-import requests
-import time
-from datetime import datetime
-import pytz
+high_r = round(mid,2)
+                close_p = round(float(row.get('lastPrice', mid) or mid),2)
+                entry = round(mid,2)
+                bid_p = round(bid,2)
+                bw = round(dist*100,2)
+                stop = round(entry*0.5,2)
+                if direction=="CALL":
+                    t1_s = round(strike + 0.3,2)
+                    t2_s = round(strike + 0.6,2)
+                    t3_s = round(strike + 1.0,2)
+                else:
+                    t1_s = round(strike - 0.3,2)
+                    t2_s = round(strike - 0.6,2)
+                    t3_s = round(strike - 1.0,2)
+                t1_c = round(entry*1.5,2)
+                t2_c = round(entry*2.3,2)
+                t3_c = round(entry*3.2,2)
+                return {
+                    "ticker":ticker, "dir":direction, "strike":int(strike) if strike==int(strike) else strike,
+                    "exp":exp_str, "dte":dte, "curr":round(curr,2), "bw":bw,
+                    "range_low":low_r, "range_high":high_r, "close":close_p,
+                    "entry":entry, "bid":bid_p, "stop":stop,
+                    "t1_s":t1_s, "t2_s":t2_s, "t3_s":t3_s,
+                    "t1_c":t1_c, "t2_c":t2_c, "t3_c":t3_c,
+                }
+        return None
+    except: return None
 
-# --- إعدادات آمنة - لا تضع التوكن هنا ---
-BOT_TOKEN = st.secrets.get("8594574378:AAFvFChSUA2AfTgcd96sknCQkGyjwlJL12w", "")
-CHAT_ID = st.secrets.get("CHAT_ID", "")
-BOT_USERNAME = "@v68_golden_555371577_bot"
+st.title("🐋 V99 - اختبار التيليجرام")
 
-st.set_page_config(page_title="V93 FINAL - Golden Detector", page_icon="🐋", layout="wide")
+# زر اختبار سريع
+if st.button("📨 اختبار التيليجرام فقط"):
+    if send("تجربة بوت V99 🐋"):
+        st.success("انرسل - شيك التيليجرام")
+    else:
+        st.error("ما انرسل - شيك الـ CHAT_ID والبوت")
 
-def send_telegram(msg):
-    if not BOT_TOKEN or not CHAT_ID:
-        return False, "BOT_TOKEN أو CHAT_ID ناقص في Secrets"
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-        r = requests.post(url, json=payload, timeout=15)
-        return r.status_code == 200, r.text
-    except Exception as e:
-        return False, str(e)
+st.divider()
 
-st.title("🐋 V93 FINAL - كاشف الحيتان GOLDEN UNDER $4")
-st.caption(f"البوت: {BOT_USERNAME}")
+if st.button("🚀 فحص العقود وارسال"):
+    sent=load()
+    all_contracts=[]
+    for t in WATCHLIST:
+        direction=get_technical_direction(t)
+        if not direction or direction=="NEUTRAL":
+            continue
+        contract=find_matching_contract(t, direction)
+        if contract:
+            all_contracts.append(contract)
+        time.sleep(0.3)
 
-# وقت
-riyadh = pytz.timezone('Asia/Riyadh')
-ny = pytz.timezone('America/New_York')
-st.info(f"⏰ وقت الرياض: {datetime.now(riyadh).strftime('%Y-%m-%d %H:%M:%S')} | وقت نيويورك: {datetime.now(ny).strftime('%Y-%m-%d %H:%M:%S')}")
-
-# --- قائمة الأسهم الرخيصة (مثال) ---
-stocks = [
-    {"symbol": "SMCI", "price": 1.00},
-    {"symbol": "PEP", "price": 1.98},
-    {"symbol": "ADBE", "price": 3.28},
-    {"symbol": "MU", "price": 3.90},
-]
-
-if st.button("🚀 فحص الآن وإرسال لتليجرام", use_container_width=True):
-    for s in stocks:
-        if s["price"] < 4:
-            target_stock_2 = s["price"] * 1.02
-            target_stock_5 = s["price"] * 1.05
-            target_opt_50 = 50
-            target_opt_150 = 150
-            
-            msg = f"""🐋 *GOLDEN UNDER $4* 🐋
-            
-💎 السهم: *{s['symbol']}*
-💰 السعر: ${s['price']}
-
-🎯 أهداف السهم:
-- 2%: ${target_stock_2:.2f}
-- 5%: ${target_stock_5:.2f}
-
-🔥 أهداف العقد:
-- 50%
-- 150%
-
-⏰ وقت الفحص: {datetime.now(riyadh).strftime('%H:%M')}
-"""
-            ok, resp = send_telegram(msg)
-            if ok:
-                st.success(f"{s['symbol']} - ${s['price']} تم الإرسال ✅")
-            else:
-                st.error(f"{s['symbol']} فشل: {resp}")
+    if not all_contracts:
+        st.info("لا يوجد عقود")
+    else:
+        for c in all_contracts:
+            emoji = "🟢" if c['dir']=="CALL" else "🔴"
+            text = (
+                f"{emoji} {c['ticker']} {c['strike']} {c['dir']} 🐋\n"
+                f"Exp: {c['exp']} ({c['dte']}d) Stock: ${c['curr']} BW {c['bw']}%\n"
+                f"Range: ${c['range_low']} - ${c['range_high']} Close: ${c['close']}\n"
+                f"Entry: ${c['entry']} Bid: ${c['bid']}\n"
+                f"Stop: ${c['stop']}\n"
+                f"Target Stock: {c['t1_s']} > {c['t2_s']} > {c['t3_s']}\n"
+                f"Target Contract: ${c['t1_c']} (+50%) | ${c['t2_c']} (+130%) | ${c['t3_c']} (+220%)"
+            )
+            st.code(text)
+            # ارسال مباشر بدون شرط التكرار للاختبار
+            send(text)
             time.sleep(1)
