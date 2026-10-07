@@ -5,7 +5,7 @@ from datetime import datetime
 import pytz
 
 # --- إعدادات آمنة - لا تضع التوكن هنا ---
-BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
+BOT_TOKEN = st.secrets.get("8594574378:AAFvFChSUA2AfTgcd96sknCQkGyjwlJL12w", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 BOT_USERNAME = "@v68_golden_555371577_bot"
 
