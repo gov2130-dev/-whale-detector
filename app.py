@@ -2,7 +2,7 @@ import streamlit as st, yfinance as yf, requests, json, os, time
 import pandas as pd
 from datetime import datetime, date
 
-BOT_TOKEN="8594574378:AAGcCOmuUyNOv3M5IWf0ROCEn1d5xpncp70"
+BOT_TOKEN="8594574378:AAF2NQzIc1mutqj8lxjthMVoSR4p889JN4k"
 CHAT_ID="13889370"
 BASE="daily_results"
 os.makedirs(BASE, exist_ok=True)
