@@ -3,7 +3,7 @@ import requests
 
 st.title("كاشف الحيتان - ابو راكان")
 
-BOT_TOKEN = st.secrets.get("BOT_TOKEN", "")
+BOT_TOKEN = 8594574378:AAF2NQzIc1mutqj8lxjthMVoSR4p889JN4k
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
 def send_telegram(msg):
