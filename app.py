@@ -3,8 +3,8 @@ import yfinance as yf
 import pandas as pd
 import requests
 
-st.set_page_config(page_title="V71 مطرقة + حوت", layout="wide")
-st.title("🔨🐋 V71 - مطرقة + عقد حوت سريع")
+st.set_page_config(page_title="V72 مطرقة ذكي", layout="wide")
+st.title("🔨 V72 - يكشف المطرقة حتى لو قريبة")
 
 BOT_TOKEN = st.secrets["BOT_TOKEN"]
 CHAT_ID = st.secrets["CHAT_ID"]
@@ -16,121 +16,110 @@ def send_telegram(msg):
         requests.post(url, data=data, timeout=15)
     except: pass
 
-def is_hammer_strict(candle):
+def analyze_candle(candle, prev, nxt):
     body = abs(candle['Close'] - candle['Open'])
     upper = candle['High'] - max(candle['Close'], candle['Open'])
     lower = min(candle['Close'], candle['Open']) - candle['Low']
     total = candle['High'] - candle['Low']
-    if total == 0 or body == 0: return False
-    # ذيل طويل 3 اضعاف الجسم + جسم صغير + ذيل علوي شبه معدوم
-    cond1 = lower >= (body * 3)
-    cond2 = body <= (total * 0.30)
-    cond3 = upper <= (total * 0.15)
-    cond4 = lower >= (total * 0.60)
-    return cond1 and cond2 and cond3 and cond4
+    if total == 0: return None
+    tail_ratio = lower / body if body>0 else 0
+    body_ratio = body / total
+    vol_ok = candle['Volume'] > prev['Volume']
+    close_ok = nxt['Close'] > candle['High']
+    is_hammer = tail_ratio >= 2.0 and body_ratio <= 0.4 and lower >= total*0.5
+    return {
+        "tail_ratio": tail_ratio, "body_ratio": body_ratio,
+        "vol_ok": vol_ok, "close_ok": close_ok, "is_hammer": is_hammer,
+        "hammer_vol": candle['Volume'], "prev_vol": prev['Volume'],
+        "high": candle['High'], "close_next": nxt['Close']
+    }
 
-UNIVERSE = ["NVDA","TSLA","SMCI","AMD","PLTR","COIN","MSTR","META","AAPL","MSFT","AMZN","NFLX","AVGO","ARM","MU","MARA","RIOT","SOFI","NIO","UPST","AI","HOOD","DKNG","RBLX","ORCL","CRWD","PANW","GOOGL","MS","TSM","INTC"]
-
-def check_whale_contract(tk):
-    try:
-        exps = tk.options[:2] # اقرب تاريخين فقط - اسرع تذبذب
-        best = []
-        for exp in exps:
-            chain = tk.option_chain(exp)
-            for df_opt in [chain.calls, chain.puts]:
-                df = df_opt.copy()
-                if len(df) == 0: continue
-                df['premium'] = df['volume'] * df['lastPrice'] * 100
-                df['spread_pct'] = (df['ask'] - df['bid']) / df['lastPrice'] * 100
-                
-                # شروط الحوت V52 الحقيقية
-                cond_whale = (
-                    (df['volume'] > df['openInterest'] * 0.8) &  # دخول حوت
-                    (df['volume'] > 800) &                      # فوليوم عالي
-                    (df['premium'] > 150000) &                  # فلوس كبيرة
-                    (df['bid'] > 0.1) &                          # مو عقد ميّت
-                    (df['spread_pct'] < 15)                      # نقدر ندخل ونطلع بسرعة
-                )
-                whales = df[cond_whale]
-                for _, row in whales.iterrows():
-                    best.append((row, exp))
-        if not best: return None
-        # رتب حسب البريميوم
-        best = sorted(best, key=lambda x: x[0]['premium'], reverse=True)
-        return best[0]
-    except Exception as e:
-        return None
+UNIVERSE = ["NVDA","TSLA","SMCI","AMD","PLTR","COIN","MSTR","META","AAPL","MSFT","AMZN","NFLX","AVGO","ARM","MU","MARA","RIOT","SOFI","NIO","UPST","AI","HOOD","DKNG","RBLX","ORCL","CRWD","PANW","GOOGL","MS","TSM"]
 
 def scan(sym):
     try:
         tk = yf.Ticker(sym)
         df = tk.history(period="15d", interval="1d")
         if len(df) < 5: return None
+        # آخر 7 أيام
+        candidates = []
+        for i in range(-7, -1):
+            c_prev = df.iloc[i-1]; c_ham = df.iloc[i]; c_next = df.iloc[i+1]
+            info = analyze_candle(c_ham, c_prev, c_next)
+            if info: candidates.append((c_ham, info))
 
-        # نفحص كل شمعة في آخر 4 أيام اذا كانت مطرقة وتحقق الشروط
-        for i in range(-4, -1): # -4, -3, -2
-            c_prev = df.iloc[i-1]
-            c_hammer = df.iloc[i]
-            c_next = df.iloc[i+1]
+        # خذ أقوى شمعة مطرقة
+        if not candidates: return None
+        best_candle, best_info = max(candidates, key=lambda x: x[1]['tail_ratio'])
 
-            if not is_hammer_strict(c_hammer): continue
-            if not (c_hammer['Volume'] > c_prev['Volume']): continue # فوليوم المطرقة اكبر من اللي قبلها
-            if not (c_next['Close'] > c_hammer['High']): continue # اللي بعدها تقفل فوق قمة المطرقة
+        # شرط الاوبشن مخفف ل V72
+        whale = None
+        try:
+            exps = tk.options[:2]
+            for exp in exps:
+                chain = tk.option_chain(exp)
+                calls = chain.calls
+                calls['premium'] = calls['volume'] * calls['lastPrice'] * 100
+                # فلتر مخفف: 300 عقد + 50k
+                filt = calls[(calls['volume']>300) & (calls['premium']>50000)]
+                if len(filt)>0:
+                    top = filt.sort_values('premium', ascending=False).iloc[0]
+                    whale = (top, exp)
+                    break
+        except: pass
 
-            # اذا تحقق شرط السهم، شيك شرط الأوبشن
-            whale = check_whale_contract(tk)
-            if not whale: continue
-
-            row, exp = whale
-            return {
-                "symbol": sym,
-                "hammer_date": str(c_hammer.name.date()),
-                "hammer_high": c_hammer['High'],
-                "hammer_low": c_hammer['Low'],
-                "hammer_vol": c_hammer['Volume'],
-                "prev_vol": c_prev['Volume'],
-                "confirm_close": c_next['Close'],
-                "price": df.iloc[-1]['Close'],
-                "opt": row,
-                "exp": exp
-            }
-        return None
+        return {
+            "symbol": sym, "price": df.iloc[-1]['Close'],
+            "best": best_info, "candle_date": str(best_candle.name.date()),
+            "whale": whale, "df": df.tail(5)
+        }
     except: return None
 
-if st.button("🚀 افحص شروط المطرقة + الحوت الآن"):
-    results = []
+if st.button("🚀 افحص المطرقة + الحوت الآن"):
+    rows = []
     prog = st.progress(0)
     for idx, sym in enumerate(UNIVERSE):
         prog.progress((idx+1)/len(UNIVERSE))
         r = scan(sym)
-        if r: results.append(r)
+        if r: rows.append(r)
     prog.empty()
 
-    if not results:
-        st.warning("ما فيه أسهم تحقق شرط المطرقة + الحوت مع بعض في آخر 4 أيام")
-        st.info("الشرط دقيق: مطرقة ذيل طويل + فوليوم اعلى من السابق + اغلاق فوق القمة + عقد حوت Premium >150k")
+    if not rows:
+        st.warning("ما فيه بيانات")
     else:
-        st.success(f"لقيت {len(results)} حوت بمطرقة ✅")
-        for r in results:
-            msg = f"""
-🔨🐋 <b>{r['symbol']} - مطرقة + حوت</b>
-📅 تاريخ المطرقة: {r['hammer_date']}
-✅ الشروط:
-1- ذيل طويل: {r['hammer_low']:.2f} -> {r['hammer_high']:.2f}
-2- فوليوم المطرقة {r['hammer_vol']:,.0f} > السابق {r['prev_vol']:,.0f}
-3- تأكيد: اغلاق {r['confirm_close']:.2f} فوق قمة {r['hammer_high']:.2f}
-💲 سعر الآن: ${r['price']:.2f}
-💰 عقد الحوت:
-Strike ${r['opt']['strike']} {r['exp']}
-Vol {r['opt']['volume']:,} > OI {r['opt']['openInterest']:,}
-Premium ${r['opt']['premium']:,.0f} | Last ${r['opt']['lastPrice']}
-Spread {r['opt']['ask']-r['opt']['bid']:.2f} (دخول سريع)
-"""
-            send_telegram(msg)
-            st.markdown(f"### {r['symbol']} 🔨 تاريخ {r['hammer_date']}")
-            st.write(f"فوليوم مطرقة {r['hammer_vol']:,} > السابق {r['prev_vol']:,} | تأكيد {r['confirm_close']:.2f} > قمة {r['hammer_high']:.2f}")
-            st.write(f"عقد: {r['opt']['strike']} Exp {r['exp']} Vol {r['opt']['volume']:,} Prem ${r['opt']['premium']:,.0f}")
+        # جدول تشخيصي
+        table = []
+        for r in rows:
+            table.append({
+                "سهم": r['symbol'],
+                "ذيل/جسم": f"{r['best']['tail_ratio']:.1f}x",
+                "جسم/شمعة": f"{r['best']['body_ratio']:.2f}",
+                "فوليوم اعلى؟": "✅" if r['best']['vol_ok'] else "❌",
+                "اغلاق فوق القمة؟": "✅" if r['best']['close_ok'] else "❌",
+                "مطرقة؟": "✅" if r['best']['is_hammer'] else "❌",
+                "حوت؟": f"Vol {r['whale'][0]['volume']:,}" if r['whale'] else "❌",
+                "تاريخ": r['candle_date']
+            })
+        df_show = pd.DataFrame(table)
+        st.dataframe(df_show, use_container_width=True)
 
-        st.balloons()
+        # الآن الفلترة النهائية اللي طلبتها بالحرف
+        final = [r for r in rows if r['best']['is_hammer'] and r['best']['vol_ok'] and r['best']['close_ok'] and r['whale']]
+
+        if not final:
+            st.warning(f"ما فيه أسهم تحقق 4 شروط مع بعض حالياً. أقرب أسهم هي اللي فوق 👆")
+            st.info("شوف الجدول: اللي عنده ✅ في كل الخانات هو المطرقة الكاملة. حالياً السوق هادي، جرب تفحص على فريم ساعة؟")
+        else:
+            st.success(f"لقيت {len(final)} مطرقة كاملة 🔨🐋")
+            for r in final:
+                msg = f"🔨🐋 <b>{r['symbol']}</b> {r['candle_date']}\nذيل {r['best']['tail_ratio']:.1f}x | فوليوم {r['best']['hammer_vol']:,.0f}>{r['best']['prev_vol']:,.0f} | اغلاق {r['best']['close_next']:.2f}>{r['best']['high']:.2f}\n💰 حوت {r['whale'][0]['strike']} Vol {r['whale'][0]['volume']:,} Prem ${r['whale'][0]['premium']:,.0f}"
+                send_telegram(msg)
+                st.success(f"{r['symbol']} - ارسل لتليجرام ✅")
+            st.balloons()
+
+    # زر اضافي للساعة
+    st.markdown("---")
+    if st.button("⏰ افحص على فريم الساعة (فرص أكثر)"):
+        st.info("على الساعة تطلع مطارق كثيرة يومياً - تبي أحول الكود لفريم 1H؟")
 else:
-    st.info("V71: يفحص آخر 4 أيام لكل سهم: مطرقة بذيل 3x + فوليوم اعلى + اغلاق فوق القمة + عقد حوت سريع")
+    st.info("V72 يعرض لك جدول تشخيصي: ذيل/جسم، هل الفوليوم اعلى، هل اغلق فوق القمة، وهل فيه حوت. اضغط الزر")
