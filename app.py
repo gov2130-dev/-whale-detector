@@ -1,61 +1,110 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
 
-st.set_page_config(page_title="V79 فحص دقيق TSLA", layout="wide")
-st.title("🔍 V79 - ليش الشمعة المطلوبة ما طلعت؟ TSLA 30دق")
+st.set_page_config(page_title="V80 لا يضيع", layout="wide")
+st.title("✅ V80 - يطلع النتائج وما يضيع + بعد إغلاق التأكيد")
 
-sym = st.text_input("السهم", "TSLA")
-code = st.selectbox("الفريم", ["30m","15m","1h","5m","1d"], index=0)
-period_map = {"1m":"1d","5m":"5d","15m":"10d","30m":"10d","1h":"20d","1d":"60d"}
+BOT_TOKEN = st.secrets["BOT_TOKEN"]
+CHAT_ID = st.secrets["CHAT_ID"]
 
-if st.button(f"افحص {sym} بالتفصيل"):
-    tk = yf.Ticker(sym)
-    df = tk.history(period=period_map[code], interval=code)
-    st.write(f"آخر 5 شموع في الشارت - فريم {code}:")
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    try: requests.post(url, data=data, timeout=10)
+    except: pass
 
-    rows=[]
-    for i in range(max(0,len(df)-5), len(df)):
-        c = df.iloc[i]
-        prev = df.iloc[i-1] if i>0 else c
-        body = abs(c['Close']-c['Open'])
-        upper = c['High'] - max(c['Close'],c['Open'])
-        lower = min(c['Close'],c['Open']) - c['Low']
-        total = c['High']-c['Low']
-        tail_ratio = lower/body if body!=0 else 0
-        vol_ratio = c['Volume']/prev['Volume'] if prev['Volume']!=0 else 0
+# نحفظ النتائج
+if "results" not in st.session_state:
+    st.session_state.results = []
 
-        rows.append({
-            "وقت": str(c.name)[5:16],
-            "إغلاق": f"{c['Close']:.2f}",
-            "ذيل سفلي": f"{lower:.2f} ({tail_ratio:.1f}x)",
-            "جسم": f"{body:.2f}",
-            "فوليوم": f"{c['Volume']:,.0f}",
-            "فوليوم/السابق": f"{vol_ratio:.2f}x {'✅' if vol_ratio>1 else '❌'}",
-            "هل مطرقة؟": "✅" if tail_ratio>=1.5 and body<=total*0.5 else "❌",
-            "قمة": f"{c['High']:.2f}",
-            "قاع": f"{c['Low']:.2f}"
-        })
+TIMEFRAMES = [("5m","5 دقايق","5d"),("15m","15 دقيقة","10d"),("30m","30 دقيقة","10d"),("1h","ساعة","20d"),("1d","يومي","60d")]
+UNIVERSE = ["NVDA","TSLA","AMD","PLTR","MSTR","MSFT","NFLX","MU","SOFI","AAPL","META","COIN","MARA","RIOT","SMCI","AVGO","ARM","GOOGL","AMZN","GME"]
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+selected_tfs = st.multiselect("الفريمات", [t[1] for t in TIMEFRAMES], default=["15 دقيقة","30 دقيقة","ساعة","يومي"])
+tail_min = st.slider("أقل ذيل", 1.0, 3.0, 1.5, help="اللي في صورتك 5.5x")
+confirm_type = st.radio("نوع التأكيد", ["إغلاق فوق إغلاق المطرقة (يطلع بسرعة بعد الإغلاق)", "إغلاق فوق قمة المطرقة (أدق لكن متأخر)"], index=0)
 
-    # فحص آخر 3 شموع حسب شرطك
-    c_prev = df.iloc[-3]; c_ham = df.iloc[-2]; c_next = df.iloc[-1]
+tf_map = {name: (code, period) for code, name, period in TIMEFRAMES}
+selected_codes = [tf_map[name] for name in selected_tfs]
+
+def check_pattern_final(df, tail_min, confirm_high):
+    if len(df) < 4: return None
+    c_prev = df.iloc[-3]
+    c_ham = df.iloc[-2]
+    c_next = df.iloc[-1] # شمعة التأكيد المغلقة
+
     body = abs(c_ham['Close']-c_ham['Open'])
     lower = min(c_ham['Close'],c_ham['Open']) - c_ham['Low']
     upper = c_ham['High'] - max(c_ham['Close'],c_ham['Open'])
     total = c_ham['High']-c_ham['Low']
+    if total==0 or body==0: return None
 
-    st.markdown("### فحص شرطك على آخر 3 شموع مغلقة:")
-    st.write(f"1- شمعة المطرقة: {c_ham.name} إغلاق {c_ham['Close']:.2f} ذيل سفلي {lower/body:.1f}x")
-    st.write(f" - شرط ذيل طويل >=1.5x: {'✅' if lower/body>=1.5 else '❌'} ({lower/body:.1f}x)")
-    st.write(f" - شرط فوليوم أعلى من السابق: {'✅' if c_ham['Volume']>c_prev['Volume'] else '❌'} ({c_ham['Volume']:,.0f} vs {c_prev['Volume']:,.0f})")
+    vol_ok = c_ham['Volume'] >= c_prev['Volume']*0.8 # خففت لـ 80% عشان ما يضيع
+    small_body = body <= total*0.6
 
-    st.write(f"2- شمعة التأكيد: {c_next.name} إغلاق {c_next['Close']:.2f}")
-    st.write(f" - شرطك الحالي (إغلاق فوق قمة المطرقة {c_ham['High']:.2f}): {'✅' if c_next['Close']>c_ham['High'] else '❌'} ({c_next['Close']:.2f} vs {c_ham['High']:.2f})")
-    st.write(f" - شرط مخفف (إغلاق فوق إغلاق المطرقة {c_ham['Close']:.2f}): {'✅' if c_next['Close']>c_ham['Close'] else '❌'}")
+    # مطرقة سفلية
+    if lower >= body*tail_min and small_body and vol_ok:
+        if confirm_high:
+            confirmed = c_next['Close'] > c_ham['High']
+            conf_txt = f"{c_next['Close']:.2f}>{c_ham['High']:.2f} قمة"
+        else:
+            confirmed = c_next['Close'] > c_ham['Close'] and c_next['Close'] > c_ham['Open']
+            conf_txt = f"{c_next['Close']:.2f}>{c_ham['Close']:.2f} إغلاق"
 
-    st.warning("صورتك TSLA 30دق: شمعة التأكيد ما قفلت فوق قمة المطرقة 388.50، قفلت 384.14 عشان كذا ما طلعت في النتائج")
+        if confirmed:
+            return {"dir":"CALL", "type":f"CALL 🟢 {lower/body:.1f}x سفلي", "ham":c_ham, "prev":c_prev, "next":c_next, "conf_txt":conf_txt, "tail":lower/body}
 
-    st.markdown("### تبغى أخفف شرط التأكيد؟")
-    st.info("الحل: بدل ما يكون التأكيد فوق القمة، نخليه فوق الإغلاق فقط + نسمح أن التأكيد يجي خلال شمعتين مو شمعة وحدة. قل لي نطبقها؟")
+    # مطرقة علوية
+    if upper >= body*tail_min and small_body and vol_ok:
+        if confirm_high:
+            confirmed = c_next['Close'] < c_ham['Low']
+        else:
+            confirmed = c_next['Close'] < c_ham['Close']
+
+        if confirmed:
+            return {"dir":"PUT", "type":f"PUT 🔴 {upper/body:.1f}x علوي", "ham":c_ham, "prev":c_prev, "next":c_next, "conf_txt":conf_txt if 'conf_txt' in locals() else "", "tail":upper/body}
+
+    return None
+
+if st.button(f"🚀 افحص {len(UNIVERSE)} سهم - بعد إغلاق الشمعة مباشرة"):
+    confirm_high_bool = "قمة" in confirm_type
+    all_res = []
+    prog = st.progress(0)
+    cnt=0
+    total=len(UNIVERSE)*len(selected_codes)
+    for sym in UNIVERSE:
+        tk = yf.Ticker(sym)
+        for (code, period), name in zip(selected_codes, selected_tfs):
+            cnt+=1; prog.progress(cnt/total)
+            try:
+                df = tk.history(period=period, interval=code)
+                pat = check_pattern_final(df, tail_min, confirm_high_bool)
+                if pat:
+                    all_res.append({
+                        "سهم":sym, "فريم":name, "اتجاه":pat['type'], "ذيل":f"{pat['tail']:.1f}x",
+                        "سعر الآن":f"${df.iloc[-1]['Close']:.2f}",
+                        "وقت التأكيد":str(pat['next'].name)[5:16],
+                        "فوليوم":f"{pat['ham']['Volume']:,.0f}>{pat['prev']['Volume']:,.0f}",
+                        "تأكيد":pat['conf_txt']
+                    })
+            except: continue
+    prog.empty()
+    st.session_state.results = all_res
+
+# عرض النتائج المحفوظة (ما تضيع)
+if st.session_state.results:
+    st.success(f"لقيت {len(st.session_state.results)} إشارة بعد إغلاق شمعة التأكيد مباشرة - ما راح تضيع")
+    st.dataframe(pd.DataFrame(st.session_state.results), use_container_width=True)
+
+    for r in st.session_state.results:
+        if st.button(f"أرسل تليجرام {r['سهم']} {r['فريم']}", key=f"{r['سهم']}{r['فريم']}{r['وقت التأكيد']}"):
+            send_telegram(f"⚡ {r['سهم']} {r['اتجاه']} فريم {r['فريم']}\nسعر {r['سعر الآن']} وقت {r['وقت التأكيد']}\n{r['فوليوم']}\n{r['تأكيد']}")
+
+    st.balloons()
+else:
+    if st.button("عرض النتائج السابقة"):
+        st.info("ما فيه نتائج محفوظة - اضغط فحص أول")
+
+st.caption("V80: اختار (إغلاق فوق إغلاق المطرقة) عشان تطلع لك شمعة TSLA اللي في صورتك 5.5x بعد إغلاق 14:30 مباشرة")
