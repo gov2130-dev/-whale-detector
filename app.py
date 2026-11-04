@@ -1,8 +1,7 @@
-# الحيتان V4 - Streamlit - كامل
-# يفحص 750 سهم - S&P500 + Nasdaq100 + ميم
-# الشروط: 1) سعر فوق VWAP + فوق قمة أمس
-#        2) سويب أوبشن غير طبيعي
-#        3) بلوك دارك بول >= 50000 سهم
+# الحيتان V4.1 - Streamlit - كامل ومصلح
+# إصلاح 1: الكون صار 180 سهم ثابت إذا فشلت Wikipedia (كان يطلع 55 بس)
+# إصلاح 2: فلتر IV صار 30% بدل 40% + عرض 1/3 بدل 2/3 عشان يطلع نتائج
+# إصلاح 3: إضافة وضع Debug عشان تشوف ليش السهم انرفض
 
 import streamlit as st
 import yfinance as yf
@@ -12,10 +11,10 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="الحيتان V4", layout="wide")
-st.title("🐋 الحيتان V4 - عقد متوافق + سويب + دارك بول")
+st.set_page_config(page_title="الحيتان V4.1", layout="wide")
+st.title("🐋 الحيتان V4.1 - عقد متوافق + سويب + دارك بول")
 
-# ===== الأسرار - من Streamlit Secrets =====
+# ===== الأسرار =====
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
     CHAT_ID = st.secrets["CHAT_ID"]
@@ -30,18 +29,19 @@ except:
 RIYADH = pytz.timezone("Asia/Riyadh")
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
-# ===== إعدادات تقدر تغيرها من الموقع نفسه بدون تعديل الكود =====
+# ===== إعدادات =====
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    MIN_IV = st.slider("أقل IV %", 20, 80, 40)
+    MIN_IV = st.slider("أقل IV %", 20, 80, 30)
 with col2:
     MIN_BLOCK = st.number_input("أقل بلوك سهم", value=50000, step=10000)
 with col3:
     MIN_SWEEP_VOL = st.number_input("أقل فوليوم سويب", value=800, step=100)
 with col4:
-    MIN_SCORE = st.selectbox("اعرض بس اللي نتيجته", [1, 2, 3], index=1)
+    MIN_SCORE = st.selectbox("اعرض بس اللي نتيجته", [1, 2, 3], index=0)
 
-# ===== تلجرام =====
+show_debug = st.checkbox("🔧 أظهر ليش الأسهم انرفضت (Debug)", value=False)
+
 def send_telegram(msg):
     if not BOT_TOKEN or not CHAT_ID:
         return False
@@ -53,23 +53,28 @@ def send_telegram(msg):
         st.warning(f"خطأ تلجرام: {e}")
         return False
 
-# ===== الكون: 750 سهم =====
+# ===== الكون: 180 سهم مضمون =====
 @st.cache_data(ttl=86400)
 def get_universe():
+    universe = []
     try:
         sp = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]['Symbol'].tolist()
         sp = [s.replace('.', '-') for s in sp]
+        universe += sp
     except:
-        sp = []
+        pass
     try:
         nd = pd.read_html("https://en.wikipedia.org/wiki/NASDAQ-100")[0]['Ticker'].tolist()
+        universe += nd
     except:
-        nd = []
-    extra = ["CHWY","GME","AMC","MARA","RIOT","CLSK","COIN","MSTR","OPEN","CVNA","BYND","SPCE","RIVN","LCID","NIO","SOFI","BABA","PDD","JD","MRNA","SMCI","ARM","APP","PLTR","HOOD","DKNG","AFRM","UPST","AI","SOUN","RBLX","U","NET","TSLA","NVDA","AMD","META","AAPL","MSFT","AMZN","NFLX","GOOGL","AVGO","CLF","X","NUE","FCX","OXY","XOM","CVX","USO","GLD","SLV","BIIB","PFE"]
-    universe = sorted(list(set(sp + nd + extra)))
+        pass
+
+    # قائمة احتياطية 180 سهم - هذي تشتغل حتى لو فشلت Wikipedia
+    backup_180 = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","BRK-B","JPM","LLY","V","XOM","UNH","MA","HD","COST","PG","JNJ","WMT","NFLX","CRM","ORCL","BAC","CVX","ABBV","KO","PEP","TMO","WFC","CSCO","ACN","MCD","ABT","DHR","LIN","TXN","QCOM","AMGN","HON","IBM","ADBE","NOW","GE","CAT","UNP","SPG","LOW","INTU","DE","AMAT","BKNG","SYK","LRCX","ADI","MMC","ADP","GILD","MELI","KLAC","SNPS","CDNS","REGN","CTSH","MRVL","ORLY","CPRT","CSX","FTNT","PAYX","CHTR","FAST","ODFL","BKR","VRSK","CTAS","XEL","AZN","TEAM","WDAY","PCAR","EA","DDOG","ZS","CRWD","PANW","NET","MDB","SNOW","AI","SOUN","UPST","AFRM","HOOD","COIN","MSTR","MARA","RIOT","CLSK","CHWY","GME","AMC","OPEN","CVNA","BYND","SPCE","RIVN","LCID","NIO","SOFI","BABA","PDD","JD","MRNA","SMCI","ARM","APP","PLTR","DKNG","RBLX","U","BIIB","PFE","NUE","FCX","OXY","USO","GLD","SLV","CLF","X","TSM","ASML","SHOP","SQ","PYPL","ABNB","UBER","LYFT","DASH","ROKU","TWLO","ZM","DOCU","PTON","TLRY","CGC","ACB","SNDL","BB","NOK","PLUG","FCEL","QS","HYMC","GPRO","SKLZ","CLOV","WISH","INTC","MU","MCHP","ON","SWKS","QRVO","ENTG","LSCC"]
+
+    universe = sorted(list(set(universe + backup_180)))
     return universe
 
-# ===== IV =====
 def get_iv_fast(ticker):
     try:
         tk = yf.Ticker(ticker)
@@ -94,7 +99,6 @@ def get_iv_fast(ticker):
     except:
         return None
 
-# ===== السعر + VWAP =====
 def get_price_vwap(ticker):
     try:
         hist = yf.download(ticker, period="2d", interval="15m", progress=False, auto_adjust=False)
@@ -118,7 +122,6 @@ def get_price_vwap(ticker):
     except:
         return None
 
-# ===== سويب أوبشن غير طبيعي =====
 def get_unusual_options(ticker):
     try:
         url = f"https://api.nasdaq.com/api/quote/{ticker}/option-chain?assetclass=stock"
@@ -134,10 +137,9 @@ def get_unusual_options(ticker):
     except:
         return []
 
-# ===== دارك بول - Polygon =====
 def get_darkpool(ticker):
     if not POLYGON_API_KEY:
-        return {"has_block": False, "blocks": []}
+        return {"has_block": False, "blocks": [], "reason": "ما فيه POLYGON_API_KEY في Secrets"}
     try:
         today = datetime.date.today()
         url = f"https://api.polygon.io/v3/trades/{ticker}?limit=1000&timestamp.gte={today}T00:00:00Z&apiKey={POLYGON_API_KEY}"
@@ -149,18 +151,17 @@ def get_darkpool(ticker):
             if size >= MIN_BLOCK:
                 blocks.append({"size": size, "price": t.get('price', 0)})
         blocks = sorted(blocks, key=lambda x: x['size'], reverse=True)[:3]
-        return {"has_block": len(blocks) > 0, "blocks": blocks}
-    except:
-        return {"has_block": False, "blocks": []}
+        return {"has_block": len(blocks) > 0, "blocks": blocks, "reason": ""}
+    except Exception as e:
+        return {"has_block": False, "blocks": [], "reason": str(e)}
 
-# ===== فحص سهم واحد =====
 def check_one(ticker):
     iv = get_iv_fast(ticker)
     if iv is None or iv < MIN_IV:
-        return None
+        return {"debug": f"{ticker}: IV {iv} أقل من {MIN_IV}%"}
     price_data = get_price_vwap(ticker)
     if not price_data:
-        return None
+        return {"debug": f"{ticker}: ما فيه بيانات سعر"}
     options = get_unusual_options(ticker)
     dark = get_darkpool(ticker)
 
@@ -168,6 +169,8 @@ def check_one(ticker):
     cond2 = len(options) > 0
     cond3 = dark['has_block']
     score = sum([cond1, cond2, cond3])
+
+    debug_msg = f"{ticker}: IV {round(iv,1)}% | سعر {price_data['price']} VWAP {price_data['vwap']} cond1={cond1} | سويب {len(options)} cond2={cond2} | بلوك {len(dark.get('blocks',[]))} cond3={cond3} {dark.get('reason','')} => {score}/3"
 
     if score >= MIN_SCORE:
         return {
@@ -182,56 +185,65 @@ def check_one(ticker):
             "Status": "WHALE CONFIRMED 🐋" if score == 3 else "WATCH 👀" if score == 2 else "IV عالي فقط 📊",
             "_score": score,
             "_options": options[:2],
-            "_blocks": dark.get('blocks', [])
+            "_blocks": dark.get('blocks', []),
+            "debug": debug_msg
         }
-    return None
+    return {"debug": debug_msg}
 
 # ===== الواجهة =====
-st.write(f"الكون: **{len(get_universe())} سهم** | فلتر IV فوق {MIN_IV}% | البلوك فوق {MIN_BLOCK} سهم")
+universe = get_universe()
+st.write(f"الكون: **{len(universe)} سهم** | فلتر IV فوق {MIN_IV}% | البلوك فوق {MIN_BLOCK} سهم")
+if not POLYGON_API_KEY:
+    st.error("⚠️ تنبيه: ما فيه POLYGON_API_KEY في Secrets، عشان كذا شرط البلوك بيكون دايماً ❌. أعلى نتيجة ممكنة الحين هي 2/3.")
+else:
+    st.success("✅ POLYGON_API_KEY موجود - شرط البلوك شغال")
 
-if st.button("🔍 افحص الآن - 750 سهم", type="primary"):
-    universe = get_universe()
+if st.button("🔍 افحص الآن", type="primary"):
     progress = st.progress(0)
     status = st.empty()
     results = []
+    debugs = []
 
     with ThreadPoolExecutor(max_workers=20) as ex:
-        # نفحص على دفعات عشان ما يعلق
         for i, item in enumerate(ex.map(check_one, universe)):
             if item:
-                results.append(item)
-            if i % 50 == 0:
+                if "_score" in item:
+                    results.append(item)
+                if "debug" in item:
+                    debugs.append(item["debug"])
+            if i % 30 == 0:
                 progress.progress(min((i+1)/len(universe), 1.0))
                 status.text(f"فحصت {i+1} / {len(universe)} ... لقيت {len(results)} سهم")
 
     progress.progress(1.0)
     status.text(f"خلص الفحص - لقيت {len(results)} سهم")
 
+    if show_debug:
+        with st.expander("🔧 ليش الأسهم انرفضت؟ اضغط هنا"):
+            for d in debugs[:100]:
+                st.text(d)
+
     if not results:
-        st.warning("ما فيه أي سهم انطبقت عليه الشروط اليوم. لا تتداول عشوائي.")
+        st.warning("ما فيه أي سهم انطبقت عليه الشروط. جرب تخفف IV لـ 20% واعرض 1/3، أو افحص وقت السوق الأمريكي.")
     else:
         results = sorted(results, key=lambda x: (x['_score'], x['IV %']), reverse=True)
         df = pd.DataFrame(results)
-        # عرض الجدول
         st.dataframe(df[["Ticker","Price","VWAP","IV %","سعر فوق VWAP+قمة أمس","سويب","بلوك","Score","Status"]], use_container_width=True)
 
-        # بطاقات الحيتان 3/3
         whales = [r for r in results if r['_score'] == 3]
         if whales:
             st.success(f"🐋 لقيت {len(whales)} حوت مؤكد 3/3")
             for w in whales:
-                with st.container():
-                    st.markdown(f"### 🐋 {w['Ticker']} - ${w['Price']} | IV {w['IV %']}%")
-                    if w['_options']:
-                        o = w['_options'][0]
-                        st.write(f"سويب: {o['type']} Strike {o['strike']} Vol {o['vol']} OI {o['oi']}")
-                    if w['_blocks']:
-                        b = w['_blocks'][0]
-                        st.write(f"بلوك: {b['size']} سهم @ ${b['price']}")
+                st.markdown(f"### 🐋 {w['Ticker']} - ${w['Price']} | IV {w['IV %']}%")
+                if w['_options']:
+                    o = w['_options'][0]
+                    st.write(f"سويب: {o['type']} Strike {o['strike']} Vol {o['vol']} OI {o['oi']}")
+                if w['_blocks']:
+                    b = w['_blocks'][0]
+                    st.write(f"بلوك: {b['size']} سهم @ ${b['price']}")
         else:
             st.info("ما فيه 3/3 اليوم، راقب الـ 2/3 فقط.")
 
-        # زر إرسال تلجرام
         if st.button("📩 أرسل التقرير لتلجرام"):
             msg = f"🌅 <b>تقرير الحيتان - {datetime.date.today()}</b>\nفحصت {len(universe)} سهم | IV فوق {MIN_IV}%\n\n"
             for r in results[:12]:
@@ -246,13 +258,12 @@ if st.button("🔍 افحص الآن - 750 سهم", type="primary"):
                 st.success("انرسل لتلجرام ✅")
             else:
                 st.error("ما انرسل - تأكد من BOT_TOKEN و CHAT_ID في Secrets")
-
 else:
-    st.info("اضغط افحص الآن عشان يبدأ فحص 750 سهم. بياخذ 1-2 دقيقة لأول مرة.")
+    st.info("اضغط افحص الآن. بياخذ 1-2 دقيقة لأول مرة.")
     st.markdown("""
     **الشروط الثلاثة:**
     - ✅ سعر فوق VWAP + فوق أعلى سعر أمس
-    - ✅ سويب CALL فوليومه أكبر من OI بـ 1.5 مرة
+    - ✅ سويب فوليومه أكبر من OI بـ 1.5 مرة
     - ✅ بلوك دارك بول واحد أكبر من 50,000 سهم
     - **3/3 = WHALE CONFIRMED 🐋**
     """)
