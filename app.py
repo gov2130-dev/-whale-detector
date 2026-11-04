@@ -1,5 +1,6 @@
-# الحيتان V6 - مضمون يطلع نتائج
-# التغيير الجوهري: ما فيه حذف. كل سهم ياخذ نقاط 0-4 ونعرض أقوى 20
+# الحيتان V7 - بطاقات توصيات فقط - بدون جدول
+# الشكل: 🟢 AAPL 325 CALL 🐋
+# Exp / Stock / Entry / Bid / Stop / Targets
 
 import streamlit as st
 import yfinance as yf
@@ -9,8 +10,8 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="صانع السوق V6", layout="wide")
-st.title("🦈 صانع السوق V6 - أقوى 20 سهم دائماً")
+st.set_page_config(page_title="توصيات V7", layout="wide")
+st.title("🦈 توصيات صانع السوق V7")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -22,13 +23,11 @@ except:
 RIYADH = pytz.timezone("Asia/Riyadh")
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9"}
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 with col1:
     MIN_IV = st.slider("أقل IV %", 15, 60, 20)
 with col2:
-    MIN_BLOCK = st.number_input("أقل بلوك سهم", value=10000, step=5000)
-with col3:
-    TOP_N = st.slider("كم سهم أعرض؟", 10, 30, 20)
+    TOP_N = st.slider("كم توصية؟", 5, 15, 8)
 
 def send_telegram(msg):
     if not BOT_TOKEN or not CHAT_ID:
@@ -57,39 +56,12 @@ def get_universe():
     universe = sorted(list(set(universe + hot)))
     return universe
 
-def get_data(ticker):
+def get_best_option(ticker):
+    # يجيب أفضل عقد: أقرب انتهاء 0-7 أيام + سترايك قريب من السعر + أعلى فوليوم
     try:
         tk = yf.Ticker(ticker)
-        iv = 0
-        top_call = None
-        top_put = None
-        try:
-            exps = tk.options
-            if exps:
-                for exp in exps[:1]:
-                    try:
-                        chain = tk.option_chain(exp)
-                        for df, typ in [(chain.calls, "CALL"), (chain.puts, "PUT")]:
-                            if len(df) == 0:
-                                continue
-                            valid = df[df['volume'] > 5]
-                            if len(valid) > 0:
-                                iv = max(iv, float(valid['impliedVolatility'].median() * 100))
-                            df2 = df[df['volume'] > 100].sort_values('volume', ascending=False)
-                            if len(df2) > 0:
-                                r = df2.iloc[0]
-                                item = {"strike": r['strike'], "vol": int(r['volume']), "oi": int(r['openInterest']), "type": typ, "price": round(float(r['lastPrice']), 2)}
-                                if typ == "CALL" and (top_call is None or item['vol'] > top_call['vol']):
-                                    top_call = item
-                                if typ == "PUT" and (top_put is None or item['vol'] > top_put['vol']):
-                                    top_put = item
-                    except:
-                        continue
-        except:
-            pass
-
         hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
-        if hist.empty or len(hist) < 2:
+        if hist.empty:
             return None
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
@@ -102,6 +74,7 @@ def get_data(ticker):
         today_vol = float(hist['Volume'].iloc[-1])
         vol_mult = today_vol / avg_vol if avg_vol > 0 else 0
 
+        # VWAP
         vwap = price
         try:
             intra = yf.download(ticker, period="1d", interval="15m", progress=False, auto_adjust=False)
@@ -113,145 +86,117 @@ def get_data(ticker):
         except:
             pass
 
-        has_block = False
-        block_size = 0
-        try:
-            url = f"https://api.nasdaq.com/api/quote/{ticker}/trades?assetclass=stock&limit=100"
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            trades = r.json().get('data', {}).get('trades', [])
-            for t in trades:
-                try:
-                    sz = int(float(str(t.get('size', '0')).replace(',', '')))
-                    if sz >= MIN_BLOCK:
-                        has_block = True
-                        block_size = max(block_size, sz)
-                except:
+        exps = tk.options
+        if not exps:
+            return None
+
+        best = None
+        best_score = -1
+        iv_val = 0
+
+        # نجرب أول 3 انتهاءات فقط - أسرع
+        today = datetime.date.today()
+        for exp_str in exps[:3]:
+            try:
+                exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
+                days_left = (exp_date - today).days
+                if days_left < 0 or days_left > 14:
                     continue
-        except:
-            pass
+                chain = tk.option_chain(exp_str)
+                # نفحص CALL و PUT
+                for df, typ in [(chain.calls, "CALL"), (chain.puts, "PUT")]:
+                    if len(df) == 0:
+                        continue
+                    # IV
+                    valid_iv = df[df['volume'] > 5]
+                    if len(valid_iv) > 0:
+                        iv_val = max(iv_val, float(valid_iv['impliedVolatility'].median() * 100))
+                    # نفلتر: سترايك قريب من السعر +/- 5% + فوليوم > 100
+                    df2 = df[(df['volume'] > 100) & (abs(df['strike'] - price) / price < 0.05)].copy()
+                    for _, row in df2.iterrows():
+                        vol = int(row['volume'])
+                        oi = int(row['openInterest'])
+                        bid = float(row['bid']) if pd.notna(row['bid']) else 0
+                        ask = float(row['ask']) if pd.notna(row['ask']) else 0
+                        last = float(row['lastPrice']) if pd.notna(row['lastPrice']) else 0
+                        entry = ask if ask > 0 else last
+                        if entry <= 0.10 or entry > 10:
+                            continue
+                        # النقاط: فوليوم عالي + سترايك قريب + سعر عقد رخيص
+                        score = vol + (500 if abs(row['strike'] - price) / price < 0.02 else 0)
+                        # تفضيل الاتجاه الصحيح: فوق VWAP -> CALL، تحت VWAP -> PUT
+                        if price > vwap and typ == "CALL":
+                            score += 1000
+                        if price < vwap and typ == "PUT":
+                            score += 1000
+                        if score > best_score:
+                            best_score = score
+                            best = {
+                                "ticker": ticker,
+                                "type": typ,
+                                "strike": float(row['strike']),
+                                "exp": exp_str,
+                                "days": days_left,
+                                "vol": vol,
+                                "oi": oi,
+                                "bid": round(bid, 2),
+                                "ask": round(ask, 2),
+                                "last": round(last, 2),
+                                "entry": round(entry, 2),
+                                "price": round(price, 2),
+                                "vwap": round(vwap, 2),
+                                "change": round(change, 2),
+                                "vol_mult": round(vol_mult, 2),
+                                "prev_high": round(prev_high, 2),
+                                "prev_low": round(prev_low, 2),
+                                "iv": round(iv_val, 1),
+                            }
+            except:
+                continue
 
+        if not best:
+            return None
+        # حساب الوقف والأهداف من سعر الدخول
+        entry = best['entry']
+        best['stop'] = round(entry * 0.5, 2)
+        best['t1'] = round(entry * 1.5, 2)
+        best['t2'] = round(entry * 2.3, 2)
+        best['t3'] = round(entry * 3.2, 2)
+        # نقاط القوة
         score = 0
-        reasons = []
-        if iv >= MIN_IV:
+        if best['iv'] >= MIN_IV:
             score += 1
-            reasons.append(f"IV {round(iv,1)}%")
-        if vol_mult >= 1.2:
+        if best['vol_mult'] >= 1.2:
             score += 1
-            reasons.append(f"فوليوم {round(vol_mult,2)}x")
-        if top_call or top_put:
+        if best['vol'] > 500:
             score += 1
-            if top_call and (not top_put or top_call['vol'] >= top_put['vol']):
-                reasons.append(f"CALL {top_call['strike']} Vol {top_call['vol']}")
-            elif top_put:
-                reasons.append(f"PUT {top_put['strike']} Vol {top_put['vol']}")
-        if has_block:
+        if (best['price'] > best['vwap'] and best['type'] == "CALL") or (best['price'] < best['vwap'] and best['type'] == "PUT"):
             score += 1
-            reasons.append(f"بلوك {block_size}")
-
-        call_vol = top_call['vol'] if top_call else 0
-        put_vol = top_put['vol'] if top_put else 0
-        if price > vwap and call_vol >= put_vol:
-            direction = "🟢 صعود"
-            trade = f"CALL فوق ${prev_high} - هدف +3%"
-            action = "CALL"
-        elif price < vwap and put_vol > call_vol:
-            direction = "🔴 نزول"
-            trade = f"PUT تحت ${prev_low} - هدف -3%"
-            action = "PUT"
-        elif price > prev_high:
-            direction = "🟢 اختراق"
-            trade = f"اختراق ${prev_high}"
-            action = "CALL"
-        elif price < prev_low:
-            direction = "🔴 كسر"
-            trade = f"كسر ${prev_low}"
-            action = "PUT"
-        else:
-            direction = "🟡 تجميع"
-            trade = "انتظر الاختراق"
-            action = "WATCH"
-
-        top_opt = ""
-        if top_call and (not top_put or call_vol >= put_vol):
-            top_opt = f"CALL {top_call['strike']} Vol {top_call['vol']} OI {top_call['oi']} ${top_call['price']}"
-        elif top_put:
-            top_opt = f"PUT {top_put['strike']} Vol {top_put['vol']} OI {top_put['oi']} ${top_put['price']}"
-
-        return {
-            "Ticker": ticker,
-            "Price": round(price, 2),
-            "التغير %": round(change, 2),
-            "VWAP": round(vwap, 2),
-            "IV %": round(iv, 1),
-            "فوليوم x": round(vol_mult, 2),
-            "الاتجاه": direction,
-            "أقوى أوبشن": top_opt,
-            "بلوك": f"✅ {block_size}" if has_block else "❌",
-            "Score": f"{score}/4",
-            "الصفقة": trade,
-            "أسباب": " + ".join(reasons) if reasons else "لا توجد إشارة قوية",
-            "_score": score,
-            "_action": action,
-        }
-    except Exception as e:
+        best['score'] = score
+        best['is_whale'] = score >= 3
+        return best
+    except:
         return None
 
 universe = get_universe()
-st.write(f"الكون: **{len(universe)} سهم** | IV فوق {MIN_IV}% | بلوك فوق {MIN_BLOCK} | بنعرض أقوى {TOP_N} سهم")
-st.info("💡 V6 ما يحذف أي سهم. حتى لو السوق ضعيف، بيطلع لك أقوى الأسهم الموجودة مرتبة.")
+st.write(f"الكون: **{len(universe)} سهم** | IV فوق {MIN_IV}% | بنعرض أقوى {TOP_N} توصية")
 
-if st.button("🔍 افحص الآن - صانع السوق", type="primary"):
+if st.button("🔍 افحص الآن - جيب توصيات", type="primary"):
     progress = st.progress(0)
     status = st.empty()
     results = []
     with ThreadPoolExecutor(max_workers=20) as ex:
-        for i, item in enumerate(ex.map(get_data, universe)):
+        for i, item in enumerate(ex.map(get_best_option, universe)):
             if item:
                 results.append(item)
             if i % 30 == 0:
                 progress.progress(min((i+1)/len(universe), 1.0))
-                status.text(f"فحصت {i+1} / {len(universe)} ...")
+                status.text(f"فحصت {i+1} / {len(universe)} ... لقيت {len(results)} عقد")
     progress.progress(1.0)
-    results = sorted(results, key=lambda x: (x['_score'], x['فوليوم x'], x['IV %']), reverse=True)
+    results = sorted(results, key=lambda x: (x['score'], x['vol'], x['vol_mult']), reverse=True)
     top = results[:TOP_N]
-    status.text(f"خلص الفحص - فحصت {len(results)} سهم، بنعرض أقوى {len(top)}")
-    df = pd.DataFrame(top)
-    st.dataframe(df[["Ticker","Price","التغير %","VWAP","IV %","فوليوم x","الاتجاه","أقوى أوبشن","بلوك","Score","الصفقة"]], use_container_width=True)
-    bulls = [r for r in top if "صعود" in r['الاتجاه'] or "اختراق" in r['الاتجاه']]
-    bears = [r for r in top if "نزول" in r['الاتجاه'] or "كسر" in r['الاتجاه']]
-    colA, colB = st.columns(2)
-    with colA:
-        st.success(f"🟢 صعود: {len(bulls)} سهم")
-        for r in bulls[:7]:
-            st.write(f"**{r['Ticker']}** ${r['Price']} ({r['التغير %']}%) - {r['أقوى أوبشن']} | {r['Score']}")
-    with colB:
-        st.error(f"🔴 نزول: {len(bears)} سهم")
-        for r in bears[:7]:
-            st.write(f"**{r['Ticker']}** ${r['Price']} ({r['التغير %']}%) - {r['أقوى أوبشن']} | {r['Score']}")
-    st.markdown("### 🔍 ليش هالأسهم اختيرت؟")
-    for r in top[:10]:
-        st.text(f"{r['Ticker']} {r['Score']} - {r['أسباب']}")
-    if st.button("📩 أرسل التقرير لتلجرام"):
-        msg = f"🦈 <b>صانع السوق V6 - {datetime.date.today()}</b>\nأقوى {len(top)} سهم\n\n"
-        msg += f"🟢 <b>صعود:</b>\n"
-        for r in bulls[:7]:
-            msg += f"{r['Ticker']} ${r['Price']} {r['التغير %']}% IV {r['IV %']}% Vol {r['فوليوم x']}x {r['Score']}\n  {r['أقوى أوبشن']}\n  {r['الصفقة']}\n"
-        msg += f"\n🔴 <b>نزول:</b>\n"
-        for r in bears[:7]:
-            msg += f"{r['Ticker']} ${r['Price']} {r['التغير %']}% IV {r['IV %']}% Vol {r['فوليوم x']}x {r['Score']}\n  {r['أقوى أوبشن']}\n  {r['الصفقة']}\n"
-        if send_telegram(msg):
-            st.success("انرسل لتلجرام ✅")
-        else:
-            st.error("ما انرسل - تأكد من BOT_TOKEN و CHAT_ID")
-else:
-    st.info("اضغط افحص الآن. بياخذ 1-2 دقيقة.")
-    st.markdown("""
-    **كيف تداول على V6:**
-    - ركز على اللي جاب **3/4 أو 4/4** فقط - هذي أقوى إشارة
-    - 🟢 صعود = CALL فوق قمة أمس
-    - 🔴 نزول = PUT تحت قاع أمس
-    - 🟡 تجميع = لا تدخل
-    - **لا تدخل إذا IV فوق 80%** - الأوبشن غالي
-    """)
+    status.text(f"خلص - أقوى {len(top)} توصية")
 
-st.caption(f"آخر تحديث: {datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')} بتوقيت الرياض")
+    # ===== بطاقات التوصيات - بدون جدول =====
+    for r in top:
+        emoji = "🟢" if r['type'] == "CALL"
