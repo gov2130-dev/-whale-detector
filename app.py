@@ -1,16 +1,17 @@
-# الحيتان V7.1 - بطاقات توصيات - مصلح خطأ SyntaxError
-# شلنا كل سطر فيه if else مع إيموجي
+# الحيتان V7.2 - ارسال واتساب + تلجرام
+# زرين فوق وتحت البطاقات
 
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
 import datetime
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="توصيات V7.1", layout="wide")
-st.title("توصيات صانع السوق V7.1")
+st.set_page_config(page_title="توصيات V7.2", layout="wide")
+st.title("توصيات صانع السوق V7.2")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -38,15 +39,39 @@ def send_telegram(msg):
     except:
         return False
 
-def get_emoji(typ):
-    if typ == "CALL":
-        return "GREEN"
-    return "RED"
+def build_msg(top):
+    msg = "توصيات صانع السوق - " + str(datetime.date.today()) + "\n\n"
+    for r in top:
+        if r["type"] == "CALL":
+            e2 = "🟢"
+        else:
+            e2 = "🔴"
+        if r["is_whale"]:
+            w2 = "🐋"
+        else:
+            w2 = "👀"
+        strike2 = int(r["strike"])
+        msg = msg + e2 + " " + r["ticker"] + " " + str(strike2) + " " + r["type"] + " " + w2 + "\n"
+        msg = msg + "Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + "\n"
+        msg = msg + "Entry: $" + str(r["entry"]) + " Bid: $" + str(r["bid"]) + "\n"
+        msg = msg + "Stop: $" + str(r["stop"]) + "\n"
+        msg = msg + "Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)\n\n"
+    return msg
 
-def get_whale_txt(is_whale):
-    if is_whale:
-        return "WHALE"
-    return "WATCH"
+def show_send_buttons(top):
+    msg = build_msg(top)
+    encoded = urllib.parse.quote(msg)
+    wa_link = "https://wa.me/?text=" + encoded
+    c1, c2 = st.columns(2)
+    with c1:
+        st.link_button("💬 ارسل واتساب", wa_link, use_container_width=True)
+    with c2:
+        if st.button("📩 ارسل تلجرام", use_container_width=True, key="tg_" + str(len(top)) + str(top[0]["ticker"])):
+            if send_telegram(msg):
+                st.success("انرسل لتلجرام ✅")
+            else:
+                st.error("ما انرسل - سوي خطوات التلجرام تحت 👇")
+    st.caption("واتساب: بيفتح لك الواتساب والتوصيات مكتوبة، اختر الشخص وارسل. تلجرام: يرسل تلقائي بدون ما تختار.")
 
 @st.cache_data(ttl=3600)
 def get_universe():
@@ -90,7 +115,6 @@ def get_best_option(ticker):
         vol_mult = 0
         if avg_vol > 0:
             vol_mult = today_vol / avg_vol
-
         vwap = price
         try:
             intra = yf.download(ticker, period="1d", interval="15m", progress=False, auto_adjust=False)
@@ -103,16 +127,13 @@ def get_best_option(ticker):
                     vwap = float((tp * intra['Volume']).sum() / total_vol)
         except:
             pass
-
         exps = tk.options
         if not exps:
             return None
-
         best = None
         best_score = -1
         iv_val = 0
         today = datetime.date.today()
-
         for exp_str in exps[:3]:
             try:
                 exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
@@ -166,37 +187,16 @@ def get_best_option(ticker):
                             score = score + 1000
                         if score > best_score:
                             best_score = score
-                            best = {
-                                "ticker": ticker,
-                                "type": typ,
-                                "strike": strike,
-                                "exp": exp_str,
-                                "days": days_left,
-                                "vol": vol,
-                                "oi": int(row['openInterest']),
-                                "bid": round(bid, 2),
-                                "ask": round(ask, 2),
-                                "entry": round(entry, 2),
-                                "price": round(price, 2),
-                                "vwap": round(vwap, 2),
-                                "change": round(change, 2),
-                                "vol_mult": round(vol_mult, 2),
-                                "prev_high": round(prev_high, 2),
-                                "prev_low": round(prev_low, 2),
-                                "iv": round(iv_val, 1),
-                            }
+                            best = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": vol, "oi": int(row['openInterest']), "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_mult": round(vol_mult, 2), "prev_high": round(prev_high, 2), "prev_low": round(prev_low, 2), "iv": round(iv_val, 1)}
             except:
                 continue
-
         if best is None:
             return None
-
         entry = best["entry"]
         best["stop"] = round(entry * 0.5, 2)
         best["t1"] = round(entry * 1.5, 2)
         best["t2"] = round(entry * 2.3, 2)
         best["t3"] = round(entry * 3.2, 2)
-
         score = 0
         if best["iv"] >= MIN_IV:
             score = score + 1
@@ -235,7 +235,8 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
     results = sorted(results, key=lambda x: (x["score"], x["vol"], x["vol_mult"]), reverse=True)
     top = results[:TOP_N]
     status.text("خلص - اقوى " + str(len(top)) + " توصية")
-
+    st.markdown("### ارسال التوصيات")
+    show_send_buttons(top)
     for r in top:
         if r["type"] == "CALL":
             emoji_txt = "🟢"
@@ -261,42 +262,23 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
             + "</div>",
             unsafe_allow_html=True
         )
-
-    if st.button("ارسل التوصيات لتلجرام"):
-        msg = "توصيات صانع السوق - " + str(datetime.date.today()) + "\n\n"
-        for r in top:
-            if r["type"] == "CALL":
-                e2 = "🟢"
-            else:
-                e2 = "🔴"
-            if r["is_whale"]:
-                w2 = "🐋"
-            else:
-                w2 = "👀"
-            strike2 = int(r["strike"])
-            msg = msg + e2 + " " + r["ticker"] + " " + str(strike2) + " " + r["type"] + " " + w2 + "\n"
-            msg = msg + "Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + "\n"
-            msg = msg + "Entry: $" + str(r["entry"]) + " Bid: $" + str(r["bid"]) + "\n"
-            msg = msg + "Stop: $" + str(r["stop"]) + "\n"
-            msg = msg + "Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)\n\n"
-        if send_telegram(msg):
-            st.success("انرسل لتلجرام")
-        else:
-            st.error("ما انرسل - تأكد من BOT_TOKEN و CHAT_ID")
+    st.markdown("### ارسال مرة ثانية")
+    show_send_buttons(top)
 else:
     st.info("اضغط افحص الان عشان تطلع لك بطاقات التوصيات.")
     st.markdown("""
-    **مثال:**
-    🟢 AAPL 325 CALL 🐋
-    Exp: 2026-09-02 (1d) Stock: $325.13
-    Entry: $1.8 Bid: $1.76
-    Stop: $0.9
-    Target: $2.7 (+50%) | $4.14 (+130%) | $5.76 (+220%)
+    **كيف ترسل:**
 
-    **كيف تداول:**
-    - ادخل على Entry او اقل
-    - الوقف = نصف الدخول
-    - بيع نصف الكمية على +50%، وخلي الباقي للاهداف البعيدة
-    """)
+    **واتساب - بدون اي اعداد:**
+    1. افحص
+    2. اضغط زر ارسل واتساب فوق البطاقات
+    3. بيفتح الواتساب والتوصيات مكتوبة جاهزة
+    4. اختر الشخص / القروب وارسل
 
-st.caption("اخر تحديث: " + datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M') + " بتوقيت الرياض")
+    **تلجرام - يحتاج اعداد مرة واحدة:**
+    1. افتح تلجرام وابحث عن @BotFather
+    2. ارسل له /newbot وسم البوت اي اسم، بيعطيك توكن طويل
+    3. افتح بوتك الجديد وارسل له اي رسالة مثل "هلا"
+    4. افتح في المتصفح: https://api.telegram.org/bot<توكنك>/getUpdates
+    5. دور على "chat":{"id":123456789} - هذا هو CHAT_ID حقك
+    6. روح Streamlit > Settings > Secrets والصق:
