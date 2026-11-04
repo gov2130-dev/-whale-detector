@@ -1,5 +1,5 @@
-# الحيتان V7.3 - بدون اي ثلاث علامات تنصيص
-# شلنا كل """ عشان النسخ من الواتساب ما يكسر الكود
+# الحيتان V7.4 - اصلاح زر مكرر + تثبيت النتائج
+# الزرين صار لهم اسم مختلف: فوق وتحت
 
 import streamlit as st
 import yfinance as yf
@@ -10,8 +10,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="توصيات V7.3", layout="wide")
-st.title("توصيات صانع السوق V7.3")
+st.set_page_config(page_title="توصيات V7.4", layout="wide")
+st.title("توصيات صانع السوق V7.4")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -58,15 +58,15 @@ def build_msg(top):
         msg = msg + "Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)\n\n"
     return msg
 
-def show_send_buttons(top):
+def show_send_buttons(top, suffix):
     msg = build_msg(top)
     encoded = urllib.parse.quote(msg)
     wa_link = "https://wa.me/?text=" + encoded
     c1, c2 = st.columns(2)
     with c1:
-        st.link_button("ارسل واتساب", wa_link, use_container_width=True)
+        st.link_button("ارسل واتساب", wa_link, use_container_width=True, key="wa_" + suffix)
     with c2:
-        if st.button("ارسل تلجرام", use_container_width=True, key="tg_" + str(len(top)) + str(top[0]["ticker"])):
+        if st.button("ارسل تلجرام", use_container_width=True, key="tg_" + suffix):
             if send_telegram(msg):
                 st.success("انرسل لتلجرام")
             else:
@@ -236,7 +236,7 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
     top = results[:TOP_N]
     status.text("خلص - اقوى " + str(len(top)) + " توصية")
     st.markdown("### ارسال التوصيات")
-    show_send_buttons(top)
+    show_send_buttons(top, "top")
     for r in top:
         if r["type"] == "CALL":
             emoji_txt = "🟢"
@@ -263,7 +263,7 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
             unsafe_allow_html=True
         )
     st.markdown("### ارسال مرة ثانية")
-    show_send_buttons(top)
+    show_send_buttons(top, "bottom")
 else:
     st.info("اضغط افحص الان عشان تطلع لك بطاقات التوصيات.")
     st.write("واتساب - بدون اي اعداد:")
