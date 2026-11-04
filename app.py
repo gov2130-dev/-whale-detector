@@ -1,5 +1,6 @@
-# الحيتان V4.2 - Streamlit - كامل
-# يشتغل بدون POLYGON_API_KEY - الدارك بول من Nasdaq المجاني
+# الحيتان V5 - صانع السوق الحقيقي
+# شروط واقعية: فوليوم انفجار + أوبشن غير طبيعي + VWAP + بلوك
+# يعطي صعود ونزول - الاثنين فيهم فلوس
 
 import streamlit as st
 import yfinance as yf
@@ -9,8 +10,8 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="الحيتان V4.2", layout="wide")
-st.title("🐋 الحيتان V4.2 - بدون Polygon")
+st.set_page_config(page_title="صانع السوق V5", layout="wide")
+st.title("🦈 صانع السوق V5 - إشارات حقيقية يومية")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -26,17 +27,16 @@ except:
 RIYADH = pytz.timezone("Asia/Riyadh")
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9"}
 
+# ===== إعدادات - خففتها عشان تطلع نتائج =====
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    MIN_IV = st.slider("أقل IV %", 20, 80, 30)
+    MIN_IV = st.slider("أقل IV %", 15, 60, 25)
 with col2:
-    MIN_BLOCK = st.number_input("أقل بلوك سهم", value=40000, step=10000)
+    MIN_BLOCK = st.number_input("أقل بلوك سهم", value=10000, step=5000)
 with col3:
-    MIN_SWEEP_VOL = st.number_input("أقل فوليوم سويب", value=800, step=100)
+    MIN_VOL_MULT = st.slider("فوليوم اليوم كم مرة من المعدل؟", 1.0, 3.0, 1.5)
 with col4:
-    MIN_SCORE = st.selectbox("اعرض بس اللي نتيجته", [1, 2, 3], index=1)
-
-show_debug = st.checkbox("🔧 أظهر ليش الأسهم انرفضت (Debug)", value=False)
+    MIN_SCORE = st.selectbox("اعرض بس اللي نتيجته", [1, 2, 3, 4], index=1)
 
 def send_telegram(msg):
     if not BOT_TOKEN or not CHAT_ID:
@@ -48,13 +48,12 @@ def send_telegram(msg):
     except:
         return False
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=3600)
 def get_universe():
     universe = []
     try:
         sp = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]['Symbol'].tolist()
-        sp = [s.replace('.', '-') for s in sp]
-        universe += sp
+        universe += [s.replace('.', '-') for s in sp]
     except:
         pass
     try:
@@ -62,78 +61,95 @@ def get_universe():
         universe += nd
     except:
         pass
-    backup_180 = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","BRK-B","JPM","LLY","V","XOM","UNH","MA","HD","COST","PG","JNJ","WMT","NFLX","CRM","ORCL","BAC","CVX","ABBV","KO","PEP","TMO","WFC","CSCO","ACN","MCD","ABT","DHR","LIN","TXN","QCOM","AMGN","HON","IBM","ADBE","NOW","GE","CAT","UNP","SPG","LOW","INTU","DE","AMAT","BKNG","SYK","LRCX","ADI","MMC","ADP","GILD","MELI","KLAC","SNPS","CDNS","REGN","CTSH","MRVL","ORLY","CPRT","CSX","FTNT","PAYX","CHTR","FAST","ODFL","BKR","VRSK","CTAS","XEL","AZN","TEAM","WDAY","PCAR","EA","DDOG","ZS","CRWD","PANW","NET","MDB","SNOW","AI","SOUN","UPST","AFRM","HOOD","COIN","MSTR","MARA","RIOT","CLSK","CHWY","GME","AMC","OPEN","CVNA","BYND","SPCE","RIVN","LCID","NIO","SOFI","BABA","PDD","JD","MRNA","SMCI","ARM","APP","PLTR","DKNG","RBLX","U","BIIB","PFE","NUE","FCX","OXY","USO","GLD","SLV","CLF","X","TSM","ASML","SHOP","SQ","PYPL","ABNB","UBER","LYFT","DASH","ROKU","TWLO","ZM","DOCU","PTON","TLRY","CGC","ACB","SNDL","BB","NOK","PLUG","FCEL","QS","HYMC","GPRO","SKLZ","CLOV","WISH","INTC","MU","MCHP","ON","SWKS","QRVO","ENTG","LSCC"]
-    universe = sorted(list(set(universe + backup_180)))
+    # قائمة مركزة: أسهم صانع السوق يحبها - عالية السيولة والحركة
+    hot = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","NFLX","AMD","SMCI","ARM","APP","PLTR","HOOD","COIN","MSTR","MARA","RIOT","CLSK","GME","AMC","OPEN","CVNA","SOFI","BABA","PDD","JD","MRNA","RIVN","LCID","NIO","DKNG","RBLX","U","AI","SOUN","UPST","AFRM","CHWY","BYND","SPCE","INTC","MU","QCOM","TXN","ADI","MCHP","ON","SHOP","SQ","PYPL","ABNB","UBER","DASH","ROKU","ZM","DOCU","PTON","TLRY","CGC","NOK","PLUG","FCEL","QS","GPRO","TSM","ASML","CRM","ORCL","BAC","JPM","XOM","CVX","WMT","COST","PEP","KO","PFE","BIIB","NUE","FCX","OXY","USO","GLD","SLV","CLF","X","LLY","V","MA","HD","JNJ","UNH","WFC","CSCO","ACN","MCD","ABT","DHR","GE","CAT","LOW","INTU","DE","AMAT","BKNG","LRCX","KLAC","SNPS","CDNS","MRVL","PANW","CRWD","NET","DDOG","ZS","MDB","SNOW","TEAM","WDAY","EA"]
+    universe = sorted(list(set(universe + hot)))
     return universe
 
-def get_iv_fast(ticker):
+def get_iv_and_options(ticker):
+    # يجيب IV + أقوى أوبشن CALL و PUT
     try:
         tk = yf.Ticker(ticker)
         exps = tk.options
         if not exps:
-            return None
-        for exp in exps[:3]:
+            return None, [], 0
+        best_calls = []
+        best_puts = []
+        iv_list = []
+        for exp in exps[:2]:
             try:
                 chain = tk.option_chain(exp)
-                calls = chain.calls
-                if len(calls) == 0:
-                    continue
-                valid = calls[calls['volume'] > 10]
-                if len(valid) < 5:
-                    continue
-                iv = valid['impliedVolatility'].median()
-                if iv and iv > 0:
-                    return float(iv) * 100
+                for df, typ in [(chain.calls, "CALL"), (chain.puts, "PUT")]:
+                    if len(df) == 0:
+                        continue
+                    # IV
+                    valid_iv = df[df['volume'] > 5]
+                    if len(valid_iv) > 0:
+                        iv_list.append(valid_iv['impliedVolatility'].median())
+                    # أوبشن غير طبيعي: فوليوم > OI
+                    df2 = df[(df['volume'] > 200) & (df['openInterest'] > 0) & (df['volume'] > df['openInterest'] * 0.8)]
+                    for _, row in df2.sort_values('volume', ascending=False).head(2).iterrows():
+                        item = {"strike": row['strike'], "vol": int(row['volume']), "oi": int(row['openInterest']), "type": typ, "exp": exp, "lastPrice": round(float(row['lastPrice']), 2)}
+                        if typ == "CALL":
+                            best_calls.append(item)
+                        else:
+                            best_puts.append(item)
             except:
                 continue
-        return 0
+        iv = float(pd.Series(iv_list).median() * 100) if iv_list else 0
+        return iv, best_calls, best_puts
     except:
-        return None
+        return None, [], []
 
-def get_price_vwap(ticker):
+def get_price_data(ticker):
     try:
-        hist = yf.download(ticker, period="2d", interval="15m", progress=False, auto_adjust=False)
-        if hist.empty:
+        # 25 يوم عشان نحسب معدل الفوليوم + VWAP + قمة وقاع أمس
+        hist = yf.download(ticker, period="1mo", interval="1d", progress=False, auto_adjust=False)
+        if hist.empty or len(hist) < 5:
             return None
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
-        hist['typical'] = (hist['High'] + hist['Low'] + hist['Close']) / 3
-        hist['vwap'] = (hist['typical'] * hist['Volume']).cumsum() / hist['Volume'].cumsum()
-        last = hist.iloc[-1]
-        prev_days = hist[hist.index.date < hist.index[-1].date()]
-        if len(prev_days) == 0:
-            return None
-        prev_high = prev_days['High'].max()
+        # فوليوم اليوم vs المعدل
+        avg_vol = hist['Volume'].iloc[:-1].mean()
+        today_vol = hist['Volume'].iloc[-1]
+        vol_mult = today_vol / avg_vol if avg_vol > 0 else 0
+        # سعر اليوم
+        price = float(hist['Close'].iloc[-1])
+        prev_high = float(hist['High'].iloc[-2])
+        prev_low = float(hist['Low'].iloc[-2])
+        prev_close = float(hist['Close'].iloc[-2])
+        change = (price - prev_close) / prev_close * 100
+
+        # VWAP اليوم من بيانات 15 دقيقة
+        try:
+            intraday = yf.download(ticker, period="1d", interval="15m", progress=False, auto_adjust=False)
+            if isinstance(intraday.columns, pd.MultiIndex):
+                intraday.columns = intraday.columns.get_level_values(0)
+            intraday['typical'] = (intraday['High'] + intraday['Low'] + intraday['Close']) / 3
+            vwap = float((intraday['typical'] * intraday['Volume']).sum() / intraday['Volume'].sum())
+        except:
+            vwap = price
+
         return {
-            "price": round(float(last['Close']), 2),
-            "vwap": round(float(last['vwap']), 2),
-            "above_vwap": float(last['Close']) > float(last['vwap']),
-            "above_prev_high": float(last['Close']) > float(prev_high)
+            "price": round(price, 2),
+            "vwap": round(vwap, 2),
+            "above_vwap": price > vwap,
+            "vol_mult": round(float(vol_mult), 2),
+            "vol_surge": vol_mult >= MIN_VOL_MULT,
+            "change": round(change, 2),
+            "prev_high": round(prev_high, 2),
+            "prev_low": round(prev_low, 2),
+            "breakout_up": price > prev_high,
+            "breakdown_down": price < prev_low,
         }
     except:
         return None
 
-def get_unusual_options(ticker):
-    try:
-        url = f"https://api.nasdaq.com/api/quote/{ticker}/option-chain?assetclass=stock"
-        r = requests.get(url, headers=HEADERS, timeout=8)
-        rows = r.json()['data']['table']['rows']
-        sweeps = []
-        for row in rows[:60]:
-            vol = int(row['volume'].replace(',', '')) if row['volume'] != '--' else 0
-            oi = int(row['openInterest'].replace(',', '')) if row['openInterest'] != '--' else 0
-            if vol > MIN_SWEEP_VOL and oi > 0 and vol > oi * 1.5:
-                sweeps.append({"strike": row['strike'], "vol": vol, "oi": oi, "type": row['callPut']})
-        return sweeps
-    except:
-        return []
-
 def get_darkpool_nasdaq(ticker):
     try:
         url = f"https://api.nasdaq.com/api/quote/{ticker}/trades?assetclass=stock&limit=100"
-        r = requests.get(url, headers=HEADERS, timeout=8)
-        data = r.json()
-        trades = data.get('data', {}).get('trades', [])
+        r = requests.get(url, headers=HEADERS, timeout=7)
+        trades = r.json().get('data', {}).get('trades', [])
         blocks = []
         for t in trades:
             try:
@@ -143,136 +159,142 @@ def get_darkpool_nasdaq(ticker):
                     blocks.append({"size": size, "price": price})
             except:
                 continue
-        blocks = sorted(blocks, key=lambda x: x['size'], reverse=True)[:3]
-        return {"has_block": len(blocks) > 0, "blocks": blocks, "source": "Nasdaq"}
+        blocks = sorted(blocks, key=lambda x: x['size'], reverse=True)[:2]
+        return {"has_block": len(blocks) > 0, "blocks": blocks}
     except:
-        return {"has_block": False, "blocks": [], "source": "Nasdaq-Fail"}
-
-def get_darkpool_polygon(ticker):
-    if not POLYGON_API_KEY:
-        return None
-    try:
-        today = datetime.date.today()
-        url = f"https://api.polygon.io/v3/trades/{ticker}?limit=1000&timestamp.gte={today}T00:00:00Z&apiKey={POLYGON_API_KEY}"
-        r = requests.get(url, timeout=10)
-        data = r.json()
-        blocks = []
-        for t in data.get('results', []):
-            if t.get('size', 0) >= MIN_BLOCK:
-                blocks.append({"size": t['size'], "price": t['price']})
-        blocks = sorted(blocks, key=lambda x: x['size'], reverse=True)[:3]
-        return {"has_block": len(blocks) > 0, "blocks": blocks, "source": "Polygon"}
-    except:
-        return None
-
-def get_darkpool(ticker):
-    if POLYGON_API_KEY:
-        res = get_darkpool_polygon(ticker)
-        if res and res['has_block']:
-            return res
-    return get_darkpool_nasdaq(ticker)
+        return {"has_block": False, "blocks": []}
 
 def check_one(ticker):
-    iv = get_iv_fast(ticker)
+    iv, calls, puts = get_iv_and_options(ticker)
     if iv is None or iv < MIN_IV:
-        return {"debug": f"{ticker}: IV {iv} أقل من {MIN_IV}%"}
-    price_data = get_price_vwap(ticker)
-    if not price_data:
-        return {"debug": f"{ticker}: ما فيه بيانات سعر"}
-    options = get_unusual_options(ticker)
-    dark = get_darkpool(ticker)
-    cond1 = price_data['above_vwap'] and price_data['above_prev_high']
-    cond2 = len(options) > 0
-    cond3 = dark['has_block']
-    score = sum([cond1, cond2, cond3])
-    debug_msg = f"{ticker}: IV {round(iv,1)}% | سعر {price_data['price']} VWAP {price_data['vwap']} cond1={cond1} | سويب {len(options)} cond2={cond2} | بلوك {len(dark.get('blocks',[]))} من {dark.get('source','')} cond3={cond3} => {score}/3"
-    if score >= MIN_SCORE:
-        return {
-            "Ticker": ticker,
-            "Price": price_data['price'],
-            "VWAP": price_data['vwap'],
-            "IV %": round(iv, 1),
-            "سعر فوق VWAP+قمة أمس": "✅" if cond1 else "❌",
-            "سويب": "✅" if cond2 else "❌",
-            "بلوك": "✅" if cond3 else "❌",
-            "Score": f"{score}/3",
-            "Status": "WHALE CONFIRMED 🐋" if score == 3 else "WATCH 👀" if score == 2 else "IV عالي فقط 📊",
-            "_score": score,
-            "_options": options[:2],
-            "_blocks": dark.get('blocks', []),
-            "debug": debug_msg
-        }
-    return {"debug": debug_msg}
+        return None
+    pdta = get_price_data(ticker)
+    if not pdta:
+        return None
+    dark = get_darkpool_nasdaq(ticker)
+
+    # 4 شروط جديدة واقعية
+    cond_vol = pdta['vol_surge']  # فوليوم انفجار
+    cond_opt = len(calls) > 0 or len(puts) > 0  # أوبشن غير طبيعي CALL أو PUT
+    cond_vwap = True  # دايماً نحسب الاتجاه من VWAP
+    cond_block = dark['has_block']
+
+    score = sum([cond_vol, cond_opt, cond_block]) + (1 if pdta['breakout_up'] or pdta['breakdown_down'] else 0)
+
+    if score < MIN_SCORE:
+        return None
+
+    # تحديد الاتجاه - صانع السوق وين رايح؟
+    call_vol = sum([c['vol'] for c in calls]) if calls else 0
+    put_vol = sum([p['vol'] for p in puts]) if puts else 0
+
+    if pdta['above_vwap'] and call_vol >= put_vol:
+        direction = "🟢 صعود - صانع سوق يجمع CALL"
+        trade = f"اشتري CALL فوق ${pdta['prev_high']} - هدف +3% إلى +5%"
+        action = "CALL"
+    elif not pdta['above_vwap'] and put_vol > call_vol:
+        direction = "🔴 نزول - صانع سوق يجمع PUT"
+        trade = f"اشتري PUT تحت ${pdta['prev_low']} - هدف -3% إلى -5%"
+        action = "PUT"
+    elif pdta['breakout_up']:
+        direction = "🟢 اختراق قمة أمس"
+        trade = f"اختراق ${pdta['prev_high']} - تابع صعود"
+        action = "CALL"
+    elif pdta['breakdown_down']:
+        direction = "🔴 كسر قاع أمس"
+        trade = f"كسر ${pdta['prev_low']} - تابع نزول"
+        action = "PUT"
+    else:
+        direction = "🟡 تجميع - صانع سوق يجمع بهدوء"
+        trade = "راقب الاختراق - لا تدخل الآن"
+        action = "WATCH"
+
+    top_opt = ""
+    if calls and (not puts or call_vol >= put_vol):
+        c = max(calls, key=lambda x: x['vol'])
+        top_opt = f"CALL {c['strike']} Vol {c['vol']} OI {c['oi']} سعر ${c['lastPrice']}"
+    elif puts:
+        p = max(puts, key=lambda x: x['vol'])
+        top_opt = f"PUT {p['strike']} Vol {p['vol']} OI {p['oi']} سعر ${p['lastPrice']}"
+
+    return {
+        "Ticker": ticker,
+        "Price": pdta['price'],
+        "التغير %": pdta['change'],
+        "VWAP": pdta['vwap'],
+        "IV %": round(iv, 1),
+        "فوليوم x": pdta['vol_mult'],
+        "الاتجاه": direction,
+        "أقوى أوبشن": top_opt,
+        "بلوك": f"✅ {dark['blocks'][0]['size']} سهم" if cond_block else "❌",
+        "Score": f"{score}/4",
+        "الصفقة": trade,
+        "_score": score,
+        "_action": action,
+        "_calls": calls[:1],
+        "_puts": puts[:1],
+        "_blocks": dark['blocks'],
+    }
 
 universe = get_universe()
-st.write(f"الكون: **{len(universe)} سهم** | فلتر IV فوق {MIN_IV}% | البلوك فوق {MIN_BLOCK} سهم")
-if POLYGON_API_KEY:
-    st.success("✅ Polygon موجود - الدارك بول من Polygon + Nasdaq")
-else:
-    st.info("ℹ️ Polygon مو موجود - الدارك بول الحين من Nasdaq المجاني، يقدر يجيب 3/3 بدون مفتاح")
+st.write(f"الكون: **{len(universe)} سهم** | IV فوق {MIN_IV}% | فوليوم فوق {MIN_VOL_MULT}x | بلوك فوق {MIN_BLOCK}")
+st.info("💡 V5 يعطيك صعود ونزول. صانع السوق يربح بالاتجاهين. لا تنتظر بس الصعود.")
 
-if st.button("🔍 افحص الآن", type="primary"):
+if st.button("🔍 افحص الآن - صانع السوق", type="primary"):
     progress = st.progress(0)
     status = st.empty()
     results = []
-    debugs = []
     with ThreadPoolExecutor(max_workers=20) as ex:
         for i, item in enumerate(ex.map(check_one, universe)):
             if item:
-                if "_score" in item:
-                    results.append(item)
-                if "debug" in item:
-                    debugs.append(item["debug"])
+                results.append(item)
             if i % 30 == 0:
                 progress.progress(min((i+1)/len(universe), 1.0))
                 status.text(f"فحصت {i+1} / {len(universe)} ... لقيت {len(results)} سهم")
     progress.progress(1.0)
     status.text(f"خلص الفحص - لقيت {len(results)} سهم")
-    if show_debug:
-        with st.expander("🔧 ليش الأسهم انرفضت؟ اضغط هنا"):
-            for d in debugs[:100]:
-                st.text(d)
+
     if not results:
-        st.warning("ما فيه أي سهم انطبقت عليه الشروط. جرب تخفف: اعرض 1/3 و IV 20%، وافحص وقت السوق الأمريكي 4:30 عصراً - 11 ليلاً الرياض.")
+        st.warning("ما فيه نتائج - السوق مغلق أو الفوليوم ضعيف اليوم. جرب تخفف: IV 15% و فوليوم 1.0x و اعرض 1/4")
     else:
-        results = sorted(results, key=lambda x: (x['_score'], x['IV %']), reverse=True)
+        results = sorted(results, key=lambda x: (x['_score'], x['فوليوم x']), reverse=True)
         df = pd.DataFrame(results)
-        st.dataframe(df[["Ticker","Price","VWAP","IV %","سعر فوق VWAP+قمة أمس","سويب","بلوك","Score","Status"]], use_container_width=True)
-        whales = [r for r in results if r['_score'] == 3]
-        if whales:
-            st.success(f"🐋 لقيت {len(whales)} حوت مؤكد 3/3")
-            for w in whales:
-                st.markdown(f"### 🐋 {w['Ticker']} - ${w['Price']} | IV {w['IV %']}%")
-                if w['_options']:
-                    o = w['_options'][0]
-                    st.write(f"سويب: {o['type']} Strike {o['strike']} Vol {o['vol']} OI {o['oi']}")
-                if w['_blocks']:
-                    b = w['_blocks'][0]
-                    st.write(f"بلوك: {b['size']} سهم @ ${b['price']}")
-        else:
-            st.info("ما فيه 3/3 اليوم، راقب الـ 2/3 فقط.")
+        st.dataframe(df[["Ticker","Price","التغير %","VWAP","IV %","فوليوم x","الاتجاه","أقوى أوبشن","بلوك","Score","الصفقة"]], use_container_width=True)
+
+        # تقسيم صعود / نزول
+        bulls = [r for r in results if "صعود" in r['الاتجاه'] or "اختراق" in r['الاتجاه']]
+        bears = [r for r in results if "نزول" in r['الاتجاه'] or "كسر" in r['الاتجاه']]
+        colA, colB = st.columns(2)
+        with colA:
+            st.success(f"🟢 صعود: {len(bulls)} سهم")
+            for r in bulls[:5]:
+                st.write(f"**{r['Ticker']}** ${r['Price']} ({r['التغير %']}%) - {r['أقوى أوبشن']}")
+        with colB:
+            st.error(f"🔴 نزول: {len(bears)} سهم")
+            for r in bears[:5]:
+                st.write(f"**{r['Ticker']}** ${r['Price']} ({r['التغير %']}%) - {r['أقوى أوبشن']}")
+
         if st.button("📩 أرسل التقرير لتلجرام"):
-            msg = f"🌅 <b>تقرير الحيتان - {datetime.date.today()}</b>\nفحصت {len(universe)} سهم | IV فوق {MIN_IV}%\n\n"
-            for r in results[:12]:
-                emoji = "🐋" if r['_score']==3 else "👀" if r['_score']==2 else "📊"
-                msg += f"{emoji} <b>{r['Ticker']}</b> ${r['Price']} | IV {r['IV %']}% | {r['_score']}/3\n"
-                if r['_options']:
-                    msg += f"   أوبشن: {r['_options'][0]['type']} {r['_options'][0]['strike']} Vol {r['_options'][0]['vol']}\n"
-                if r['_blocks']:
-                    msg += f"   بلوك: {r['_blocks'][0]['size']} سهم\n"
-            msg += "\n💡 ادخل بس على 3/3 أو 2/3"
+            msg = f"🦈 <b>صانع السوق - {datetime.date.today()}</b>\nفحصت {len(universe)} سهم\n\n"
+            msg += f"🟢 <b>صعود ({len(bulls)}):</b>\n"
+            for r in bulls[:7]:
+                msg += f"{r['Ticker']} ${r['Price']} {r['التغير %']}% IV {r['IV %']}% Vol {r['فوليوم x']}x\n  {r['أقوى أوبشن']}\n  {r['الصفقة']}\n"
+            msg += f"\n🔴 <b>نزول ({len(bears)}):</b>\n"
+            for r in bears[:7]:
+                msg += f"{r['Ticker']} ${r['Price']} {r['التغير %']}% IV {r['IV %']}% Vol {r['فوليوم x']}x\n  {r['أقوى أوبشن']}\n  {r['الصفقة']}\n"
             if send_telegram(msg):
                 st.success("انرسل لتلجرام ✅")
             else:
-                st.error("ما انرسل - تأكد من BOT_TOKEN و CHAT_ID في Secrets")
+                st.error("ما انرسل - تأكد من BOT_TOKEN و CHAT_ID")
 else:
-    st.info("اضغط افحص الآن. بياخذ 1-2 دقيقة لأول مرة.")
+    st.info("اضغط افحص الآن. بياخذ 1-2 دقيقة.")
     st.markdown("""
-    **الشروط الثلاثة:**
-    - ✅ سعر فوق VWAP + فوق أعلى سعر أمس
-    - ✅ سويب فوليومه أكبر من OI بـ 1.5 مرة
-    - ✅ بلوك دارك بول واحد أكبر من 40,000 سهم (من Nasdaq المجاني)
-    - **3/3 = WHALE CONFIRMED 🐋**
+    **كيف تداول على V5 - مهم:**
+    - 🟢 صعود + CALL فوليوم عالي = اشتري CALL فوق قمة أمس
+    - 🔴 نزول + PUT فوليوم عالي = اشتري PUT تحت قاع أمس
+    - 🟡 تجميع = لا تدخل، انتظر الاختراق
+    - **لا تدخل إذا IV فوق 80%** - الأوبشن غالي وممكن يخسرك حتى لو السهم مشى صح
+    - **هدفك 3% - 5% فقط** - الأوبشن يومي، لا تطمع
     """)
 
 st.caption(f"آخر تحديث: {datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')} بتوقيت الرياض")
