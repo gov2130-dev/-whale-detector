@@ -1,5 +1,5 @@
-# الحيتان V7.2 - ارسال واتساب + تلجرام
-# زرين فوق وتحت البطاقات
+# الحيتان V7.3 - بدون اي ثلاث علامات تنصيص
+# شلنا كل """ عشان النسخ من الواتساب ما يكسر الكود
 
 import streamlit as st
 import yfinance as yf
@@ -10,8 +10,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="توصيات V7.2", layout="wide")
-st.title("توصيات صانع السوق V7.2")
+st.set_page_config(page_title="توصيات V7.3", layout="wide")
+st.title("توصيات صانع السوق V7.3")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -64,13 +64,13 @@ def show_send_buttons(top):
     wa_link = "https://wa.me/?text=" + encoded
     c1, c2 = st.columns(2)
     with c1:
-        st.link_button("💬 ارسل واتساب", wa_link, use_container_width=True)
+        st.link_button("ارسل واتساب", wa_link, use_container_width=True)
     with c2:
-        if st.button("📩 ارسل تلجرام", use_container_width=True, key="tg_" + str(len(top)) + str(top[0]["ticker"])):
+        if st.button("ارسل تلجرام", use_container_width=True, key="tg_" + str(len(top)) + str(top[0]["ticker"])):
             if send_telegram(msg):
-                st.success("انرسل لتلجرام ✅")
+                st.success("انرسل لتلجرام")
             else:
-                st.error("ما انرسل - سوي خطوات التلجرام تحت 👇")
+                st.error("ما انرسل - سوي خطوات التلجرام تحت")
     st.caption("واتساب: بيفتح لك الواتساب والتوصيات مكتوبة، اختر الشخص وارسل. تلجرام: يرسل تلقائي بدون ما تختار.")
 
 @st.cache_data(ttl=3600)
@@ -266,19 +266,18 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
     show_send_buttons(top)
 else:
     st.info("اضغط افحص الان عشان تطلع لك بطاقات التوصيات.")
-    st.markdown("""
-    **كيف ترسل:**
+    st.write("واتساب - بدون اي اعداد:")
+    st.write("1. افحص")
+    st.write("2. اضغط زر ارسل واتساب فوق البطاقات")
+    st.write("3. بيفتح الواتساب والتوصيات مكتوبة جاهزة")
+    st.write("4. اختر الشخص او القروب وارسل")
+    st.write("تلجرام - يحتاج اعداد مرة واحدة:")
+    st.write("1. افتح تلجرام وابحث عن BotFather")
+    st.write("2. ارسل له newbot وسم البوت اي اسم، بيعطيك توكن طويل")
+    st.write("3. افتح بوتك الجديد وارسل له اي رسالة مثل هلا")
+    st.write("4. افتح في المتصفح: api.telegram.org/bot - توكنك - /getUpdates")
+    st.write("5. دور على chat id - هذا هو CHAT_ID حقك")
+    st.write("6. روح Streamlit - Settings - Secrets والصق BOT_TOKEN و CHAT_ID")
+    st.write("7. بعدها زر ارسل تلجرام بيرسل تلقائي")
 
-    **واتساب - بدون اي اعداد:**
-    1. افحص
-    2. اضغط زر ارسل واتساب فوق البطاقات
-    3. بيفتح الواتساب والتوصيات مكتوبة جاهزة
-    4. اختر الشخص / القروب وارسل
-
-    **تلجرام - يحتاج اعداد مرة واحدة:**
-    1. افتح تلجرام وابحث عن @BotFather
-    2. ارسل له /newbot وسم البوت اي اسم، بيعطيك توكن طويل
-    3. افتح بوتك الجديد وارسل له اي رسالة مثل "هلا"
-    4. افتح في المتصفح: https://api.telegram.org/bot<توكنك>/getUpdates
-    5. دور على "chat":{"id":123456789} - هذا هو CHAT_ID حقك
-    6. روح Streamlit > Settings > Secrets والصق:
+st.caption("اخر تحديث: " + datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M') + " بتوقيت الرياض")
