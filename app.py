@@ -1,13 +1,14 @@
-# V12.5 - كامل - انسخه كله وامسح القديم
+# V12.4 - خفيف وسريع - يفتح على طول
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import urllib.parse
 
 st.set_page_config(page_title="حيتان صانع السوق", layout="wide")
-st.title("🐋 حيتان صانع السوق - V12.5")
-st.caption("مفتوح بكل وقت - يفحص المفضلة بس - يعطيك بس المنطبق")
+st.title("🐋 حيتان صانع السوق - V12.4")
+st.caption("مفتوح بكل وقت - يفحص المفضلة بس عند كل بحث")
 
+# --- قائمة المفضلة للأوبشنز فقط ---
+# لا تفحص 500 سهم، افحص هذي بس، تخلص في 20 ثانية
 FAVORITE_OPTIONS = [
     "SPY", "QQQ", "IWM", "DIA", "GLD", "SLV", "GDX", "GDXJ", "USO", "TLT",
     "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META", "AMZN", "GOOGL", "NFLX", "AVGO",
@@ -51,88 +52,50 @@ def analyze(ticker, df):
         low = df["Low"]
         high = df["High"]
         vol = df["Volume"]
-        opn = df["Open"]
         c = num(close)
         if c == 0 or len(close) < 30:
             return None
-        low_90 = float(low.tail(90).min())
-        high_90 = float(high.tail(90).max())
+        low_52 = float(low.tail(90).min())
+        high_52 = float(high.tail(90).max())
         ma20 = float(close.tail(20).mean())
-        ma50 = float(close.tail(50).mean()) if len(close) >= 50 else ma20
         last_vol = num(vol)
         avg_vol = float(vol.tail(20).mean())
-        o = num(opn)
-        # شروط مشددة - عشان ما يطلع 22 سهم
-        # CALL: قاع قوي + شمعة خضراء + فوليوم فوق المتوسط + فوق MA20
-        near_low = c <= low_90 * 1.05
-        green = c > o
-        vol_ok = last_vol > avg_vol * 1.4 if avg_vol > 0 else False
-        above_ma20 = c > ma20
-        if near_low and green and vol_ok and above_ma20:
-            return {"ticker": ticker, "signal": "CALL - دخول صانع سوق", "kind": "⭐ مفضلة - قاع قوي", "price": round(c, 2), "entry": round(num(high), 2), "stop": round(low_90, 2), "condition": "قاع قوي + شمعة خضراء + فوليوم + فوق MA20"}
-        # PUT: قمة + شمعة حمراء + فوليوم + تحت MA20
-        near_high = c >= high_90 * 0.95
-        red = c < o
-        below_ma20 = c < ma20
-        if near_high and red and vol_ok and below_ma20:
-            return {"ticker": ticker, "signal": "PUT - دخول صانع سوق", "kind": "⭐ مفضلة - قمة ضعيفة", "price": round(c, 2), "entry": round(num(low), 2), "stop": round(high_90, 2), "condition": "قمة ضعيفة + شمعة حمراء + فوليوم + تحت MA20"}
+        # قاع قوي: قريب من قاع 3 شهور + فوليوم عالي + فوق MA20
+        near_low = c <= low_52 * 1.08
+        vol_spike = last_vol > avg_vol * 1.3 if avg_vol > 0 else False
+        above_ma = c > ma20
+        # قمة ضعيفة: قريب من قمة 3 شهور + نازل من القمة
+        near_high = c >= high_52 * 0.92
+        falling = c < num(high)
+        if near_low and (vol_spike or above_ma):
+            return {"ticker": ticker, "signal": "CALL - دخول صانع سوق", "kind": "⭐ مفضلة أوبشنز - قاع", "price": round(c, 2), "entry": round(num(high), 2), "stop": round(low_52, 2), "condition": "قاع قوي + فوليوم + فوق MA20"}
+        if near_high and falling:
+            return {"ticker": ticker, "signal": "PUT - دخول صانع سوق", "kind": "⭐ مفضلة أوبشنز - قمة", "price": round(c, 2), "entry": round(num(low), 2), "stop": round(high_52, 2), "condition": "قمة ضعيفة + نازل من القمة"}
         return None
     except Exception:
         return None
 
-# صندوق رقم الواتساب - فوق الزر، عشان ما يختفي
-st.subheader("📲 ارسال للواتساب")
-phone = st.text_input("رقم الواتساب (اختياري) - بدون + وبدون صفر، مثال: 9665XXXXXXXX", placeholder="9665XXXXXXXX")
-
-# زر البحث - كل شي جواه
+# --- زر البحث ---
 if st.button("🔍 اكتشف حيتان جديدة", use_container_width=True):
     results = []
     bar = st.progress(0)
     txt = st.empty()
     for i, t in enumerate(FAVORITE_OPTIONS):
         txt.text(f"يفحص: {t} - {i+1}/{len(FAVORITE_OPTIONS)}")
-        bar.progress((i + 1) / len(FAVORITE_OPTIONS))
+        bar.progress((i+1)/len(FAVORITE_OPTIONS))
         df = get_df(t)
         if df is not None:
             r = analyze(t, df)
-            if r is not None:
+            if r:
                 results.append(r)
     bar.empty()
     txt.empty()
-
     if len(results) == 0:
         st.warning("مافيه سهم من المفضلة انطبقت عليه الشروط الحين - لا تدخل شي")
     else:
         st.success(f"طلع لك {len(results)} سهم من المفضلة انطبقت عليه الشروط")
-
-        # رسالة الواتساب كاملة - جوة الزر، مو برا
-        msg_lines = ["🐋 حيتان صانع السوق - V12.5", ""]
         for m in results:
-            msg_lines.append(f"{m['ticker']} | {m['signal']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']}")
-        msg_text = "\n".join(msg_lines)
-        encoded = urllib.parse.quote(msg_text)
-
-        if phone.strip() != "":
-            wa_link = f"https://wa.me/{phone.strip()}?text={encoded}"
-            st.link_button("📲 ارسل كل النتائج لهذا الرقم واتساب", wa_link, use_container_width=True)
-        else:
-            wa_link_all = f"https://wa.me/?text={encoded}"
-            st.link_button("📲 ارسل كل النتائج واتساب - اختر من ترسل له", wa_link_all, use_container_width=True)
-
-        st.code(msg_text, language="text")
-        st.divider()
-
-        for m in results:
-            single = f"🐋 {m['ticker']} | {m['signal']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | {m['condition']}"
-            single_enc = urllib.parse.quote(single)
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.info(f"{m['ticker']} | {m['signal']} | {m['kind']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | {m['condition']}")
-            with col2:
-                if phone.strip() != "":
-                    st.link_button("واتساب", f"https://wa.me/{phone.strip()}?text={single_enc}")
-                else:
-                    st.link_button("واتساب", f"https://wa.me/?text={single_enc}")
+            st.info(f"{m['ticker']} | {m['signal']} | {m['kind']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | {m['condition']}")
 
 st.divider()
-st.caption("مفتوح بكل وقت - يعرض بس المنطبق - لا يعرض CALL في القمة ولا PUT في القاع")
+st.caption("يفحص المفضلة بس - عشان يفتح بسرعة وما يعلق. لا يعرض: CALL في القمة - PUT في القاع")
