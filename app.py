@@ -1,5 +1,4 @@
-# الحيتان V11 - صانع سوق حقيقي + سترايك اقل من 3% و اقل من 3 دولار
-# الشروط الثلاثة كلها لازم تتحقق مع بعض
+# الحيتان V11.1 - اصلاح الكون + تخفيف الشروط بدون ما تصير وهمية
 
 import streamlit as st
 import yfinance as yf
@@ -22,19 +21,18 @@ except:
 
 RIYADH = pytz.timezone("Asia/Riyadh")
 
-# الشروط الثلاثة - كلها داخل الكود فقط
 MIN_ENTRY = 0.50
 MAX_ENTRY = 3.00
 MIN_DAYS = 4
 MAX_DAYS = 21
-MIN_VOL_OI = 1.00
-MIN_PREMIUM = 100000
-MIN_VOL = 1000
-MIN_OI = 1000
+MIN_VOL_OI = 0.80
+MIN_PREMIUM = 50000
+MIN_VOL = 300
+MIN_OI = 300
 MAX_PER_TICKER = 4
 MAX_STRIKE_PCT = 0.03
 MAX_STRIKE_DOLLARS = 3.00
-MAX_SPREAD_PCT = 0.20
+MAX_SPREAD_PCT = 0.30
 
 if "groups" not in st.session_state:
     st.session_state.groups = None
@@ -82,7 +80,6 @@ def show_send_buttons(groups, suffix):
                 st.success("انرسل لتلجرام")
             else:
                 st.error("ما انرسل")
-    st.caption("واتساب: بيفتح لك الواتساب والتوصيات مكتوبة، اختر الشخص وارسل. تلجرام: يرسل تلقائي.")
 
 def show_groups(groups):
     for g in groups:
@@ -134,11 +131,12 @@ def get_universe():
             universe.append(s)
     except:
         pass
-    hot = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","NFLX","AMD","SMCI","ARM","APP","PLTR","HOOD","COIN","MSTR","MARA","RIOT","CLSK","GME","AMC","OPEN","CVNA","SOFI","BABA","PDD","JD","MRNA","RIVN","LCID","NIO","DKNG","RBLX","U","AI","SOUN","UPST","AFRM","CHWY","BYND","SPCE","INTC","MU","QCOM","TXN","ADI","MCHP","ON","SHOP","SQ","PYPL","ABNB","UBER","DASH","ROKU","ZM","DOCU","PTON","TLRY","CGC","NOK","PLUG","FCEL","QS","GPRO","TSM","ASML","CRM","ORCL","BAC","JPM","XOM","CVX","WMT","COST","PEP","KO","PFE","BIIB","NUE","FCX","OXY","USO","GLD","SLV","CLF","X","LLY","V","MA","HD","JNJ","UNH","WFC","CSCO","ACN","MCD","ABT","DHR","GE","CAT","LOW","INTU","DE","AMAT","BKNG","LRCX","KLAC","SNPS","CDNS","MRVL","PANW","CRWD","NET","DDOG","ZS","MDB","SNOW","TEAM","WDAY","EA"]
+    # قائمة احتياطية كبيرة - اذا ويكيبيديا فشل، ما نعتمد على 122 سهم بس
+    hot = ["AAPL","MSFT","NVDA","AMZN","GOOGL","GOOG","META","TSLA","AVGO","NFLX","AMD","SMCI","ARM","APP","PLTR","HOOD","COIN","MSTR","MARA","RIOT","CLSK","GME","AMC","OPEN","CVNA","SOFI","BABA","PDD","JD","MRNA","RIVN","LCID","NIO","DKNG","RBLX","U","AI","SOUN","UPST","AFRM","CHWY","BYND","SPCE","INTC","MU","QCOM","TXN","ADI","MCHP","ON","SHOP","SQ","PYPL","ABNB","UBER","DASH","ROKU","ZM","DOCU","PTON","TLRY","CGC","NOK","PLUG","FCEL","QS","GPRO","TSM","ASML","CRM","ORCL","BAC","JPM","XOM","CVX","WMT","COST","PEP","KO","PFE","BIIB","NUE","FCX","OXY","USO","GLD","SLV","CLF","X","LLY","V","MA","HD","JNJ","UNH","WFC","CSCO","ACN","MCD","ABT","DHR","GE","CAT","LOW","INTU","DE","AMAT","BKNG","LRCX","KLAC","SNPS","CDNS","MRVL","PANW","CRWD","NET","DDOG","ZS","MDB","SNOW","TEAM","WDAY","EA","AAL","UAL","DAL","CCL","NCLH","RCL","MARA","HIMS","GRAB","SE","MELI","NU","BILI","XPEV","LI","BIDU","IQ","TME","VIPS","DIDI","ZM","DOCU","CRWD","OKTA","TWLO","FSLY","NET","DDOG","ESTC","GTLB","HCP","CFLT","SNOW","AI","PATH","UPST","AFRM","SOFI","HOOD","COIN","RBLX","U","DKNG","PENN","SE","SHOP","SQ","PYPL","ABNB","UBER","LYFT","DASH","ROKU","PTON","TDOC","PINS","SNAP","TWTR","SPOT","NFLX","DIS","WBD","PARA","CMCSA","T","VZ","TMUS","SBUX","MCD","YUM","DPZ","CMG","SHAK","WING","LUV","JBLU","SAVE","HA","ALK","EXPE","BKNG","ABNB","MAR","HLT","H","WYNN","LVS","MGM","CZR","PENN","DKNG","SEAS","FUN","SIX","PLNT","YETI","CROX","SKX","DECK","UAA","NKE","ADDYY","LULU","GPS","ANF","AEO","URBN","BBY","WMT","TGT","COST","BJ","DG","DLTR","FIVE","BURL","ROST","TJX","KSS","JWN","M","DDS","HD","LOW","SHW","SWK","MAS","WHR","LEG","TPX","SNBR","RH","WSM","ETSY","EBAY","W","WAYFAIR","CHWY","PETS","WOOF","FRPT","BARK","WMT","AMZN","EBAY","ETSY","MELI","SE","CPNG","BABA","JD","PDD","VIPS","BILI","IQ","TME","BIDU","XPEV","NIO","LI","SE","GRAB","NU","HIMS","OSCR","CLOV","SDC","ROOT","LMND","MTTR","OPEN","CVNA","VRM","KMX","AN","PAG","LAD","ABG","SAH","GPI","CARG","CARS","TRUE","ACVA","RUSH","ARCB","ODFL","SAIA","XPO","CHRW","EXPD","JBHT","KNX","WERN","MRTN","SNDR","LSTR","HUBG","GXO","FDX","UPS","AMZN","WMT","TGT","COST","HD","LOW"]
     for s in hot:
         if s not in universe:
             universe.append(s)
-    universe = sorted(universe)
+    universe = sorted(list(set(universe)))
     return universe
 
 def is_market_open_now():
@@ -147,7 +145,6 @@ def is_market_open_now():
         return False
     minutes = now.hour * 60 + now.minute
     open_min = 17 * 60 + 30
-    close_min = 24 * 60
     if minutes >= open_min or minutes < 60:
         return True
     return False
@@ -219,18 +216,6 @@ def get_mm_for_ticker(ticker):
             change = (price - prev_close) / prev_close * 100
         if abs(change) > 25:
             return None
-        vwap = price
-        try:
-            intra = yf.download(ticker, period="1d", interval="15m", progress=False, auto_adjust=False)
-            if not intra.empty:
-                if isinstance(intra.columns, pd.MultiIndex):
-                    intra.columns = intra.columns.get_level_values(0)
-                tp = (intra['High'] + intra['Low'] + intra['Close']) / 3
-                total_vol = float(intra['Volume'].sum())
-                if total_vol > 0:
-                    vwap = float((tp * intra['Volume']).sum() / total_vol)
-        except:
-            pass
         exps = tk.options
         if not exps:
             return None
@@ -247,17 +232,13 @@ def get_mm_for_ticker(ticker):
                 for df, typ in pairs:
                     if len(df) == 0:
                         continue
-                    if price > vwap and typ == "PUT":
-                        continue
-                    if price < vwap and typ == "CALL":
-                        continue
                     for idx, row in df.iterrows():
                         info = check_mm(row, price)
                         if info is None:
                             continue
                         strike = float(row['strike'])
                         entry = info["entry"]
-                        c = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": info["vol"], "oi": info["oi"], "bid": info["bid"], "ask": info["ask"], "entry": info["entry"], "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_oi": info["vol_oi"], "premium": info["premium"]}
+                        c = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": info["vol"], "oi": info["oi"], "bid": info["bid"], "ask": info["ask"], "entry": info["entry"], "price": round(price, 2), "change": round(change, 2), "vol_oi": info["vol_oi"], "premium": info["premium"]}
                         c["stop"] = round(entry * 0.5, 2)
                         c["t1"] = round(entry * 1.5, 2)
                         c["t2"] = round(entry * 2.3, 2)
@@ -275,6 +256,7 @@ def get_mm_for_ticker(ticker):
         return None
 
 universe = get_universe()
+st.write("الكون: " + str(len(universe)) + " سهم - اذا طلع 122 معناها ويكيبيديا فشل")
 
 c_scan, c_clear = st.columns(2)
 with c_scan:
@@ -289,7 +271,7 @@ if do_new:
 
 if do_scan:
     if not is_market_open_now():
-        st.warning("السوق مغلق الحين - Yahoo يعطي بيانات قديمة وتطلع توصيات وهمية. افحص من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
+        st.warning("السوق مغلق الحين - افحص من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
     else:
         progress = st.progress(0)
         status = st.empty()
