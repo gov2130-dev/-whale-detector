@@ -1,5 +1,5 @@
-# الحيتان V7.5 - نتيجة ثابتة لا تتغير
-# اول فحص ينحفظ، وما يتغير الا بزر فحص جديد
+# الحيتان V8 - مؤشر صانع السوق الحقيقي
+# لا نعبي القائمة غصب - اذا ما فيه صانع سوق، نقول ما فيه
 
 import streamlit as st
 import yfinance as yf
@@ -10,8 +10,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="توصيات V7.5", layout="wide")
-st.title("توصيات صانع السوق V7.5")
+st.set_page_config(page_title="مؤشر صانع السوق V8", layout="wide")
+st.title("مؤشر صانع السوق V8")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -24,14 +24,16 @@ RIYADH = pytz.timezone("Asia/Riyadh")
 
 col1, col2 = st.columns(2)
 with col1:
-    MIN_IV = st.slider("اقل IV %", 15, 60, 20)
+    MIN_SCORE = st.slider("قوة صانع السوق المطلوبة", 5, 8, 6)
 with col2:
-    TOP_N = st.slider("كم توصية؟", 5, 15, 8)
+    TOP_N = st.slider("اقصى عدد توصيات", 3, 10, 5)
 
 if "top" not in st.session_state:
     st.session_state.top = None
 if "last_scan" not in st.session_state:
     st.session_state.last_scan = ""
+if "scan_msg" not in st.session_state:
+    st.session_state.scan_msg = ""
 
 def send_telegram(msg):
     if not BOT_TOKEN or not CHAT_ID:
@@ -44,19 +46,16 @@ def send_telegram(msg):
         return False
 
 def build_msg(top):
-    msg = "توصيات صانع السوق - " + str(datetime.date.today()) + "\n\n"
+    msg = "مؤشر صانع السوق - " + str(datetime.date.today()) + "\n\n"
     for r in top:
         if r["type"] == "CALL":
             e2 = "🟢"
         else:
             e2 = "🔴"
-        if r["is_whale"]:
-            w2 = "🐋"
-        else:
-            w2 = "👀"
         strike2 = int(r["strike"])
-        msg = msg + e2 + " " + r["ticker"] + " " + str(strike2) + " " + r["type"] + " " + w2 + "\n"
+        msg = msg + e2 + " " + r["ticker"] + " " + str(strike2) + " " + r["type"] + " MM:" + str(r["mm_score"]) + "/8\n"
         msg = msg + "Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + "\n"
+        msg = msg + "Vol/OI: " + str(r["vol_oi"]) + "x Premium: $" + str(r["premium"]) + "\n"
         msg = msg + "Entry: $" + str(r["entry"]) + " Bid: $" + str(r["bid"]) + "\n"
         msg = msg + "Stop: $" + str(r["stop"]) + "\n"
         msg = msg + "Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)\n\n"
@@ -85,21 +84,23 @@ def show_cards(top):
         else:
             emoji_txt = "🔴"
             border = "#ef4444"
-        if r["is_whale"]:
-            whale_txt = "🐋"
-            whale_note = "حوت مؤكد - صانع سوق داخل بقوة"
+        if r["mm_score"] >= 7:
+            mm_txt = "صانع سوق قوي جدا"
+            mm_color = "#22c55e"
         else:
-            whale_txt = "👀"
-            whale_note = "اشارة مراقبة - ادخل بنصف كمية"
+            mm_txt = "صانع سوق مؤكد"
+            mm_color = "#f59e0b"
         strike_int = int(r["strike"])
         st.markdown(
             "<div style='border:2px solid " + border + "; border-radius:16px; padding:16px; margin-bottom:14px; background:#0f172a;'>"
-            + "<div style='font-size:22px; font-weight:800; color:white;'>" + emoji_txt + " " + r["ticker"] + " " + str(strike_int) + " " + r["type"] + " " + whale_txt + "</div>"
-            + "<div style='color:#cbd5e1; margin-top:6px; font-size:15px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + " (" + str(r["change"]) + "%) IV: " + str(r["iv"]) + "% Vol: " + str(r["vol_mult"]) + "x</div>"
+            + "<div style='font-size:22px; font-weight:800; color:white;'>" + emoji_txt + " " + r["ticker"] + " " + str(strike_int) + " " + r["type"] + " 🐋</div>"
+            + "<div style='font-size:15px; font-weight:700; color:" + mm_color + "; margin-top:4px;'>مؤشر صانع السوق: " + str(r["mm_score"]) + "/8 - " + mm_txt + "</div>"
+            + "<div style='color:#cbd5e1; margin-top:6px; font-size:14px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + " (" + str(r["change"]) + "%)</div>"
+            + "<div style='color:white; margin-top:8px; font-size:14px;'>Vol/OI: <b>" + str(r["vol_oi"]) + "x</b> | Premium: <b>$" + str(r["premium"]) + "</b> | OI: " + str(r["oi"]) + " | Vol: " + str(r["vol"]) + "</div>"
+            + "<div style='color:#94a3b8; margin-top:4px; font-size:13px;'>" + r["mm_reasons"] + "</div>"
             + "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
-            + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> <span style='color:#94a3b8;'>Vol " + str(r["vol"]) + " | OI " + str(r["oi"]) + " | Score " + str(r["score"]) + "/4</span></div>"
+            + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> | Delta: " + str(r["delta"]) + " | IV: " + str(r["iv"]) + "%</div>"
             + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
-            + "<div style='color:#94a3b8; margin-top:6px; font-size:13px;'>" + whale_note + "</div>"
             + "</div>",
             unsafe_allow_html=True
         )
@@ -126,7 +127,83 @@ def get_universe():
     universe = sorted(universe)
     return universe
 
-def get_best_option(ticker):
+def calc_mm_score(row, price, vwap, exp_days, ticker_iv):
+    mm = 0
+    reasons = []
+    vol = int(row['volume'])
+    oi = int(row['openInterest'])
+    bid = 0
+    ask = 0
+    last = 0
+    try:
+        bid = float(row['bid'])
+    except:
+        bid = 0
+    try:
+        ask = float(row['ask'])
+    except:
+        ask = 0
+    try:
+        last = float(row['lastPrice'])
+    except:
+        last = 0
+    entry = ask
+    if entry <= 0:
+        entry = last
+    if entry <= 0:
+        return None
+    vol_oi = 0
+    if oi > 0:
+        vol_oi = vol / oi
+    premium = int(vol * entry * 100)
+    strike = float(row['strike'])
+    delta = 0
+    try:
+        delta = abs(float(row['delta']))
+    except:
+        delta = 0
+    iv = 0
+    try:
+        iv = float(row['impliedVolatility']) * 100
+    except:
+        iv = ticker_iv
+    if vol_oi >= 2.0:
+        mm = mm + 2
+        reasons.append("فلوس جديدة Vol/OI 2x+")
+    elif vol_oi >= 1.0:
+        mm = mm + 1
+        reasons.append("Vol/OI فوق 1x")
+    if premium >= 500000:
+        mm = mm + 2
+        reasons.append("بريميوم ضخم +500k")
+    elif premium >= 100000:
+        mm = mm + 1
+        reasons.append("بريميوم +100k")
+    if oi >= 5000:
+        mm = mm + 1
+        reasons.append("OI عالي 5000+")
+    if vol >= 2000:
+        mm = mm + 1
+        reasons.append("فوليوم 2000+")
+    if delta >= 0.30 and delta <= 0.60:
+        mm = mm + 1
+        reasons.append("دلتا صانع سوق 0.3-0.6")
+    if iv >= 40:
+        mm = mm + 1
+        reasons.append("IV عالي")
+    if abs(strike - price) / price <= 0.02:
+        mm = mm + 1
+        reasons.append("ATM تماما")
+    if premium < 50000:
+        return None
+    if vol < 500:
+        return None
+    if oi < 200:
+        return None
+    out = {"mm_score": mm, "vol_oi": round(vol_oi, 2), "premium": premium, "delta": round(delta, 2), "iv": round(iv, 1), "reasons": " | ".join(reasons), "entry": round(entry, 2), "bid": round(bid, 2), "ask": round(ask, 2), "vol": vol, "oi": oi}
+    return out
+
+def get_mm_for_ticker(ticker):
     try:
         tk = yf.Ticker(ticker)
         hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
@@ -136,8 +213,6 @@ def get_best_option(ticker):
             hist.columns = hist.columns.get_level_values(0)
         price = float(hist['Close'].iloc[-1])
         prev_close = float(hist['Close'].iloc[-2])
-        prev_high = float(hist['High'].iloc[-2])
-        prev_low = float(hist['Low'].iloc[-2])
         change = 0
         if prev_close != 0:
             change = (price - prev_close) / prev_close * 100
@@ -162,11 +237,8 @@ def get_best_option(ticker):
         if not exps:
             return None
         best = None
-        best_score = -1
-        best_key = ""
-        iv_val = 0
         today = datetime.date.today()
-        for exp_str in exps[:3]:
+        for exp_str in exps[:4]:
             try:
                 exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
                 days_left = (exp_date - today).days
@@ -177,93 +249,50 @@ def get_best_option(ticker):
                 for df, typ in pairs:
                     if len(df) == 0:
                         continue
-                    valid_iv = df[df['volume'] > 5]
-                    if len(valid_iv) > 0:
-                        cur_iv = float(valid_iv['impliedVolatility'].median() * 100)
-                        if cur_iv > iv_val:
-                            iv_val = cur_iv
-                    df_sorted = df.sort_values(by=["volume", "strike"], ascending=[False, True])
-                    for idx, row in df_sorted.iterrows():
+                    for idx, row in df.iterrows():
                         vol = int(row['volume'])
-                        if vol < 100:
+                        if vol < 500:
                             continue
                         strike = float(row['strike'])
                         diff = abs(strike - price) / price
                         if diff > 0.05:
                             continue
-                        bid = 0
-                        ask = 0
-                        last = 0
-                        try:
-                            bid = float(row['bid'])
-                        except:
-                            bid = 0
-                        try:
-                            ask = float(row['ask'])
-                        except:
-                            ask = 0
-                        try:
-                            last = float(row['lastPrice'])
-                        except:
-                            last = 0
-                        entry = ask
-                        if entry <= 0:
-                            entry = last
-                        if entry <= 0.10 or entry > 10:
+                        info = calc_mm_score(row, price, vwap, days_left, 0)
+                        if info is None:
                             continue
-                        score = vol
-                        if diff < 0.02:
-                            score = score + 500
-                        if price > vwap and typ == "CALL":
-                            score = score + 1000
-                        if price < vwap and typ == "PUT":
-                            score = score + 1000
-                        key = str(score) + "_" + str(typ) + "_" + str(strike)
-                        if score > best_score or (score == best_score and key < best_key):
-                            best_score = score
-                            best_key = key
-                            best = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": vol, "oi": int(row['openInterest']), "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_mult": round(vol_mult, 2), "prev_high": round(prev_high, 2), "prev_low": round(prev_low, 2), "iv": round(iv_val, 1)}
+                        if info["mm_score"] < MIN_SCORE:
+                            continue
+                        if price > vwap and typ == "PUT":
+                            continue
+                        if price < vwap and typ == "CALL":
+                            continue
+                        if best is None or info["mm_score"] > best["mm_score"] or (info["mm_score"] == best["mm_score"] and info["premium"] > best["premium"]):
+                            entry = info["entry"]
+                            best = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": info["vol"], "oi": info["oi"], "bid": info["bid"], "ask": info["ask"], "entry": info["entry"], "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_mult": round(vol_mult, 2), "iv": info["iv"], "mm_score": info["mm_score"], "vol_oi": info["vol_oi"], "premium": info["premium"], "delta": info["delta"], "mm_reasons": info["reasons"]}
+                            best["stop"] = round(entry * 0.5, 2)
+                            best["t1"] = round(entry * 1.5, 2)
+                            best["t2"] = round(entry * 2.3, 2)
+                            best["t3"] = round(entry * 3.2, 2)
             except:
                 continue
-        if best is None:
-            return None
-        entry = best["entry"]
-        best["stop"] = round(entry * 0.5, 2)
-        best["t1"] = round(entry * 1.5, 2)
-        best["t2"] = round(entry * 2.3, 2)
-        best["t3"] = round(entry * 3.2, 2)
-        score = 0
-        if best["iv"] >= MIN_IV:
-            score = score + 1
-        if best["vol_mult"] >= 1.2:
-            score = score + 1
-        if best["vol"] > 500:
-            score = score + 1
-        is_call_up = best["price"] > best["vwap"] and best["type"] == "CALL"
-        is_put_down = best["price"] < best["vwap"] and best["type"] == "PUT"
-        if is_call_up or is_put_down:
-            score = score + 1
-        best["score"] = score
-        if score >= 3:
-            best["is_whale"] = True
-        else:
-            best["is_whale"] = False
         return best
     except:
         return None
 
 universe = get_universe()
-st.write("الكون: " + str(len(universe)) + " سهم | IV فوق " + str(MIN_IV) + "% | بنعرض اقوى " + str(TOP_N) + " توصية")
+st.write("الكون: " + str(len(universe)) + " سهم | قوة صانع السوق المطلوبة: " + str(MIN_SCORE) + "/8 | اقصى عدد: " + str(TOP_N))
+st.write("مبدأ V8: اذا ما فيه صانع سوق حقيقي، ما نعطيك توصية. الافضل لا تدخل ولا تخسر على توصية وهمية.")
 
 c_scan, c_clear = st.columns(2)
 with c_scan:
-    do_scan = st.button("افحص الان - جيب توصيات", type="primary", use_container_width=True)
+    do_scan = st.button("افحص صانع السوق الان", type="primary", use_container_width=True)
 with c_clear:
     do_new = st.button("فحص جديد - امسح القديم", use_container_width=True)
 
 if do_new:
     st.session_state.top = None
     st.session_state.last_scan = ""
+    st.session_state.scan_msg = ""
     st.rerun()
 
 if do_scan:
@@ -271,40 +300,44 @@ if do_scan:
     status = st.empty()
     results = []
     with ThreadPoolExecutor(max_workers=10) as ex:
-        for i, item in enumerate(ex.map(get_best_option, universe)):
+        for i, item in enumerate(ex.map(get_mm_for_ticker, universe)):
             if item is not None:
                 results.append(item)
             if i % 30 == 0:
                 progress.progress(min((i+1)/len(universe), 1.0))
-                status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
+                status.text("فحصت " + str(i+1) + " / " + str(len(universe)) + " - لقيت " + str(len(results)) + " صانع سوق")
     progress.progress(1.0)
-    results = sorted(results, key=lambda x: (-x["score"], -x["vol"], -x["vol_mult"], x["ticker"], x["strike"], x["type"]))
+    results = sorted(results, key=lambda x: (-x["mm_score"], -x["premium"], x["ticker"]))
     top = results[:TOP_N]
     st.session_state.top = top
     st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
-    st.success("تم الحفظ - النتيجة الحين ثابتة وما بتتغير الا بزر فحص جديد")
+    if len(top) == 0:
+        st.session_state.scan_msg = "ما فيه صانع سوق اليوم - كل الاسهم فشلت في اختبار صانع السوق. لا تدخل اي صفقة اليوم."
+    else:
+        st.session_state.scan_msg = "لقيت " + str(len(top)) + " صانع سوق حقيقي - هذولي فقط اللي عدوا الاختبار"
 
 if st.session_state.top is not None:
-    st.write("اخر فحص: " + st.session_state.last_scan + " بتوقيت الرياض - النتيجة محفوظة")
-    st.markdown("### ارسال التوصيات")
-    show_send_buttons(st.session_state.top, "top")
-    show_cards(st.session_state.top)
-    st.markdown("### ارسال مرة ثانية")
-    show_send_buttons(st.session_state.top, "bottom")
+    if len(st.session_state.top) == 0:
+        st.warning(st.session_state.scan_msg)
+        st.write("هذا شي زين مو شين. معناها صانع السوق ما دخل اليوم. اللي يدخل على اي سهم في هاليوم يخسر.")
+    else:
+        st.success(st.session_state.scan_msg)
+        st.write("اخر فحص: " + st.session_state.last_scan + " بتوقيت الرياض - النتيجة محفوظة")
+        st.markdown("### ارسال التوصيات")
+        show_send_buttons(st.session_state.top, "top")
+        show_cards(st.session_state.top)
+        st.markdown("### ارسال مرة ثانية")
+        show_send_buttons(st.session_state.top, "bottom")
 else:
-    st.info("اضغط افحص الان عشان تطلع لك بطاقات التوصيات.")
-    st.write("واتساب - بدون اي اعداد:")
-    st.write("1. افحص")
-    st.write("2. اضغط زر ارسل واتساب فوق البطاقات")
-    st.write("3. بيفتح الواتساب والتوصيات مكتوبة جاهزة")
-    st.write("4. اختر الشخص او القروب وارسل")
-    st.write("تلجرام - يحتاج اعداد مرة واحدة:")
-    st.write("1. افتح تلجرام وابحث عن BotFather")
-    st.write("2. ارسل له newbot وسم البوت اي اسم، بيعطيك توكن طويل")
-    st.write("3. افتح بوتك الجديد وارسل له اي رسالة مثل هلا")
-    st.write("4. افتح في المتصفح: api.telegram.org/bot - توكنك - /getUpdates")
-    st.write("5. دور على chat id - هذا هو CHAT_ID حقك")
-    st.write("6. روح Streamlit - Settings - Secrets والصق BOT_TOKEN و CHAT_ID")
-    st.write("7. بعدها زر ارسل تلجرام بيرسل تلقائي")
+    st.info("اضغط افحص صانع السوق الان.")
+    st.write("كيف يشتغل مؤشر صانع السوق V8:")
+    st.write("1. Vol/OI فوق 2x = فلوس جديدة داخلة اليوم - نقطتين")
+    st.write("2. بريميوم فوق 500k = صانع سوق يدفع فلوس كبيرة - نقطتين")
+    st.write("3. OI فوق 5000 = متمركز من قبل - نقطة")
+    st.write("4. فوليوم فوق 2000 - نقطة")
+    st.write("5. دلتا 0.3 الى 0.6 = عقد صانع السوق المفضل - نقطة")
+    st.write("6. IV فوق 40 - نقطة")
+    st.write("7. سترايك ATM تماما - نقطة")
+    st.write("اذا السهم ما جاب 6 من 8، ما يطلع لك. عشان كذا النتيجة ثابتة وما تتغير كل 5 دقايق.")
 
 st.caption("اخر تحديث: " + datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M') + " بتوقيت الرياض")
