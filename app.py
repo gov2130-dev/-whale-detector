@@ -1,5 +1,5 @@
-# الحيتان V12.1 - سهم واحد = اتجاه واحد بس
-# صانع السوق يدخل صعود او يخرج نزول. ما يشتري الاثنين مع بعض.
+# V12.2 - سهم واحد = اتجاه واحد + قاع وقمة
+# صانع السوق يدخل في القاع ويطلع في القمة
 
 import streamlit as st
 import yfinance as yf
@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytz
 
 st.set_page_config(page_title="توصيات صانع السوق", layout="wide")
-st.title("توصيات صانع السوق - V12.1")
+st.title("توصيات صانع السوق - V12.2")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -61,7 +61,6 @@ def build_msg(whales_list):
         by_ticker[w["ticker"]].append(w)
     for ticker, lst in by_ticker.items():
         price = lst[0]["price"]
-        # الاتجاه - كلهم نفس الاتجاه الحين
         direction = lst[0]["type"]
         if direction == "CALL":
             dir_txt = "صعود"
@@ -70,13 +69,14 @@ def build_msg(whales_list):
         msg = msg + "=== " + ticker + " $" + str(price) + " - " + dir_txt + " ===\n"
         for r in lst:
             if r["type"] == "CALL":
-                e2 = "🟢"
+                e2 = "CALL"
             else:
-                e2 = "🔴"
+                e2 = "PUT"
             strike2 = int(r["strike"])
             msg = msg + e2 + " " + ticker + " " + str(strike2) + " " + r["type"] + "\n"
             msg = msg + "Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Entry: $" + str(r["entry"]) + " Bid: $" + str(r["bid"]) + "\n"
-            msg = msg + "مركز الحوت: $" + str(r["position_premium"]) + " | OI: " + str(r["oi"]) + " (" + r["oi_change_txt"] + ")\n"
+            msg = msg + "مركز الحوت: $" + str(r["position_premium"]) + " OI: " + str(r["oi"]) + " " + r["oi_change_txt"] + "\n"
+            msg = msg + "مكان السهم: " + r["zone_txt"] + "\n"
             msg = msg + "Stop: $" + str(r["stop"]) + " Target: $" + str(r["t1"]) + " | $" + str(r["t2"]) + " | $" + str(r["t3"]) + "\n\n"
     return msg
 
@@ -90,7 +90,7 @@ def show_send_buttons(whales_list, suffix):
     with c2:
         if st.button("ارسل تلجرام", use_container_width=True, key="tg_" + suffix):
             if send_telegram(msg):
-                st.success("انرسل لتلجرام")
+                st.success("انرسل")
             else:
                 st.error("ما انرسل")
 
@@ -105,41 +105,42 @@ def show_whales(whales_list):
         change = lst[0]["change"]
         direction = lst[0]["type"]
         if direction == "CALL":
-            dir_txt = "صعود 🟢 - صانع السوق داخل"
+            dir_txt = "صعود - صانع السوق داخل"
             dir_color = "#86efac"
         else:
-            dir_txt = "نزول 🔴 - صانع السوق خارج"
+            dir_txt = "نزول - صانع السوق خارج"
             dir_color = "#fca5a5"
         st.markdown(
             "<div style='background:#1e293b; border-radius:16px; padding:14px; margin-top:18px; margin-bottom:6px;'>"
-            + "<div style='font-size:24px; font-weight:800; color:white;'>🐋 " + ticker + " - $" + str(price) + " (" + str(change) + "%)</div>"
+            + "<div style='font-size:24px; font-weight:800; color:white;'> " + ticker + " - $" + str(price) + " (" + str(change) + "%)</div>"
             + "<div style='color:" + dir_color + "; margin-top:4px; font-size:16px; font-weight:700;'>" + dir_txt + " - " + str(len(lst)) + " عقود بنفس الاتجاه</div>"
             + "</div>",
             unsafe_allow_html=True
         )
         for r in lst:
             if r["type"] == "CALL":
-                emoji_txt = "🟢"
+                emoji_txt = "CALL"
                 border = "#22c55e"
             else:
-                emoji_txt = "🔴"
+                emoji_txt = "PUT"
                 border = "#ef4444"
             strike_int = int(r["strike"])
             if r["status"] == "EXITING":
-                status_html = "<div style='background:#7f1d1d; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>⚠️ الحوت بدأ يطلع - OI نزل " + str(r["oi_change_pct"]) + "% - لا تدخل جديد</div>"
+                status_html = "<div style='background:#7f1d1d; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>الحوت بدا يطلع - OI نزل " + str(r["oi_change_pct"]) + "% - لا تدخل جديد</div>"
             elif r["status"] == "NEW":
-                status_html = "<div style='background:#14532d; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>🆕 حوت جديد دخل اليوم - " + r["first_seen"] + "</div>"
+                status_html = "<div style='background:#14532d; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>حوت جديد دخل اليوم - " + r["first_seen"] + "</div>"
             else:
-                status_html = "<div style='background:#1e3a8a; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>✅ الحوت لسه داخل من " + r["first_seen"] + " - مركزه: $" + str(r["position_premium"]) + "</div>"
+                status_html = "<div style='background:#1e3a8a; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>الحوت لسه داخل من " + r["first_seen"] + " - مركزه: $" + str(r["position_premium"]) + "</div>"
             if r["bid"] == 0:
-                bid_text = "<div style='color:#facc15; margin-top:10px; font-size:14px;'>⚠️ السوق مغلق - Entry هذا سعر اغلاق امس، تأكد من Bid الحي الساعة 5:30</div><div style='color:white; margin-top:4px; font-size:16px;'>Entry (اغلاق امس): <b>$" + str(r["entry"]) + "</b></div>"
+                bid_text = "<div style='color:#facc15; margin-top:10px; font-size:14px;'>السوق مغلق - Entry سعر اغلاق امس</div><div style='color:white; margin-top:4px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b></div>"
             else:
                 bid_text = "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
             st.markdown(
                 "<div style='border:2px solid " + border + "; border-radius:16px; padding:16px; margin-bottom:12px; margin-left:16px; background:#0f172a;'>"
                 + "<div style='font-size:20px; font-weight:800; color:white;'>" + emoji_txt + " " + ticker + " " + str(strike_int) + " " + r["type"] + "</div>"
-                + "<div style='color:#cbd5e1; margin-top:6px; font-size:14px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) | OI: <b>" + str(r["oi"]) + "</b> (" + r["oi_change_txt"] + ") | Vol اليوم: " + str(r["vol"]) + "</div>"
-                + "<div style='color:#86efac; margin-top:4px; font-size:15px; font-weight:700;'>مركز الحوت: <b>$" + str(r["position_premium"]) + "</b> | اول دخول: " + r["first_seen"] + "</div>"
+                + "<div style='color:#cbd5e1; margin-top:6px; font-size:14px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) OI: <b>" + str(r["oi"]) + "</b> (" + r["oi_change_txt"] + ") Vol: " + str(r["vol"]) + "</div>"
+                + "<div style='color:#facc15; margin-top:4px; font-size:15px; font-weight:700;'>مكان السهم: " + r["zone_txt"] + "</div>"
+                + "<div style='color:#86efac; margin-top:4px; font-size:15px; font-weight:700;'>مركز الحوت: <b>$" + str(r["position_premium"]) + "</b> اول دخول: " + r["first_seen"] + "</div>"
                 + bid_text
                 + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b></div>"
                 + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
@@ -235,9 +236,9 @@ def check_discover(row, price):
 def get_raw_chain_for_ticker(ticker):
     try:
         tk = yf.Ticker(ticker)
-        hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
+        hist = yf.download(ticker, period="1mo", interval="1d", progress=False, auto_adjust=False)
         if hist.empty:
-            return None, None, None
+            return None, None, None, None
         if isinstance(hist.columns, pd.MultiIndex):
             hist.columns = hist.columns.get_level_values(0)
         price = float(hist['Close'].iloc[-1])
@@ -246,10 +247,22 @@ def get_raw_chain_for_ticker(ticker):
         if prev_close != 0:
             change = (price - prev_close) / prev_close * 100
         if abs(change) > 25:
-            return None, None, None
+            return None, None, None, None
+        # حساب القاع والقمة لاخر 20 يوم
+        hist20 = hist.tail(20)
+        low20 = float(hist20['Low'].min())
+        high20 = float(hist20['High'].max())
+        pos = 0.5
+        if high20 > low20:
+            pos = (price - low20) / (high20 - low20)
+        zone_txt = "وسط " + str(round(pos * 100)) + "%"
+        if pos < 0.40:
+            zone_txt = "قاع " + str(round(pos * 100)) + "%"
+        elif pos > 0.85:
+            zone_txt = "قمة " + str(round(pos * 100)) + "%"
         exps = tk.options
         if not exps:
-            return None, None, None
+            return None, None, None, None
         today = datetime.date.today()
         all_contracts = []
         for exp_str in exps[:6]:
@@ -279,12 +292,12 @@ def get_raw_chain_for_ticker(ticker):
                             entry = last
                         if entry <= 0:
                             continue
-                        all_contracts.append({"ticker": ticker, "type": typ, "strike": float(row['strike']), "exp": exp_str, "days": days_left, "vol": vol, "oi": oi, "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "price": round(price, 2), "change": round(change, 2)})
+                        all_contracts.append({"ticker": ticker, "type": typ, "strike": float(row['strike']), "exp": exp_str, "days": days_left, "vol": vol, "oi": oi, "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "price": round(price, 2), "change": round(change, 2), "pos": pos, "zone_txt": zone_txt, "low20": low20, "high20": high20})
             except:
                 continue
-        return all_contracts, price, change
+        return all_contracts, price, change, pos
     except:
-        return None, None, None
+        return None, None, None, None
 
 universe = get_universe()
 st.write("الكون: " + str(len(universe)) + " سهم")
@@ -292,11 +305,11 @@ st.write("الحيتان المتابعة الحين: " + str(len(st.session_sta
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    do_discover = st.button("🔍 اكتشف حيتان جديدة", type="primary", use_container_width=True)
+    do_discover = st.button("اكتشف حيتان جديدة", type="primary", use_container_width=True)
 with c2:
-    do_track = st.button("👀 تابع الحيتان اللي عندي", use_container_width=True)
+    do_track = st.button("تابع الحيتان اللي عندي", use_container_width=True)
 with c3:
-    do_clear = st.button("🗑️ امسح الكل", use_container_width=True)
+    do_clear = st.button("امسح الكل", use_container_width=True)
 
 if do_clear:
     st.session_state.whales = {}
@@ -304,22 +317,24 @@ if do_clear:
     st.session_state.last_discover = ""
     st.rerun()
 
-# --- 1. الاكتشاف - مع اصلاح الاتجاه الواحد ---
 if do_discover:
     if not is_market_open_now():
-        st.warning("السوق مغلق الحين - افحص من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
+        st.warning("السوق مغلق - افحص من 5:30 عصر الى 12 ليل")
     else:
         progress = st.progress(0)
         status = st.empty()
-        # نجمع كل المرشحين اول، ما نضيفهم على طول
-        # عشان نقدر نقارن CALL ضد PUT على نفس السهم
         candidates_by_ticker = {}
         with ThreadPoolExecutor(max_workers=10) as ex:
             for i, res in enumerate(ex.map(get_raw_chain_for_ticker, universe)):
                 if res is not None:
-                    all_contracts, price, change = res
+                    all_contracts, price, change, pos = res
                     if all_contracts is not None:
                         for c in all_contracts:
+                            # فلتر القاع والقمة - قبل ما نضيف الحوت
+                            if c["type"] == "CALL" and c["pos"] > 0.85:
+                                continue
+                            if c["type"] == "PUT" and c["pos"] < 0.15:
+                                continue
                             fake_row = {"volume": c["vol"], "openInterest": c["oi"], "bid": c["bid"], "ask": c["ask"], "lastPrice": c["entry"], "strike": c["strike"]}
                             info = check_discover(fake_row, price)
                             if info is None:
@@ -327,7 +342,6 @@ if do_discover:
                             key = c["ticker"] + "_" + str(int(c["strike"])) + "_" + c["type"] + "_" + c["exp"]
                             if key in st.session_state.whales:
                                 continue
-                            # نحسب مركز الحوت لهالعقد
                             position_premium = int(c["oi"] * c["entry"] * 100)
                             cand = {
                                 "ticker": c["ticker"], "type": c["type"], "strike": c["strike"], "exp": c["exp"], "days": c["days"],
@@ -337,6 +351,7 @@ if do_discover:
                                 "position_premium": position_premium, "first_seen": datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M'),
                                 "status": "NEW", "oi_change_pct": 0, "oi_change_txt": "جديد", "stop": round(c["entry"] * 0.5, 2),
                                 "t1": round(c["entry"] * 1.5, 2), "t2": round(c["entry"] * 2.3, 2), "t3": round(c["entry"] * 3.2, 2),
+                                "pos": c["pos"], "zone_txt": c["zone_txt"], "low20": c["low20"], "high20": c["high20"],
                             }
                             if c["ticker"] not in candidates_by_ticker:
                                 candidates_by_ticker[c["ticker"]] = []
@@ -345,42 +360,33 @@ if do_discover:
                     progress.progress(min((i+1)/len(universe), 1.0))
                     status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
         progress.progress(1.0)
-        # --- هنا الاصلاح: سهم واحد = اتجاه واحد ---
         new_count = 0
         for ticker, cands in candidates_by_ticker.items():
-            # اذا السهم عنده حوت قديم، لازم نلتزم باتجاهه، ما نضيف اتجاه عكسه
             old_types = set([w["type"] for w in st.session_state.whales.values() if w["ticker"] == ticker])
             if len(old_types) > 0:
-                # السهم عنده اتجاه قديم - نحذف اي مرشح عكس الاتجاه
                 old_type = list(old_types)[0]
                 cands = [c for c in cands if c["type"] == old_type]
                 if len(cands) == 0:
                     continue
             else:
-                # سهم جديد - نقارن مجموع CALL ضد مجموع PUT
                 call_total = sum([c["position_premium"] for c in cands if c["type"] == "CALL"])
                 put_total = sum([c["position_premium"] for c in cands if c["type"] == "PUT"])
-                # الاقوى يفوز، والثاني ينحذف كله
                 if call_total > 0 and put_total > 0:
                     if call_total >= put_total:
-                        # صعود يفوز - نحذف كل PUT
                         cands = [c for c in cands if c["type"] == "CALL"]
                     else:
-                        # نزول يفوز - نحذف كل CALL
                         cands = [c for c in cands if c["type"] == "PUT"]
-            # نرتب المرشحين وناخذ اقوى 4 بنفس الاتجاه
             cands = sorted(cands, key=lambda x: (-x["position_premium"], x["entry"]))[:MAX_PER_TICKER]
             for cand in cands:
                 key = cand["ticker"] + "_" + str(int(cand["strike"])) + "_" + cand["type"] + "_" + cand["exp"]
                 st.session_state.whales[key] = cand
                 new_count += 1
         st.session_state.last_discover = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
-        st.success("اكتشفت " + str(new_count) + " حوت جديد. المجموع الحين: " + str(len(st.session_state.whales)))
+        st.success("اكتشفت " + str(new_count) + " حوت جديد. المجموع: " + str(len(st.session_state.whales)))
 
-# --- 2. المتابعة ---
 if do_track:
     if len(st.session_state.whales) == 0:
-        st.warning("ما عندك حيتان لسه. اضغط اكتشف حيتان جديدة اول.")
+        st.warning("ما عندك حيتان. اضغط اكتشف اول.")
     else:
         tickers_to_track = sorted(list(set([w["ticker"] for w in st.session_state.whales.values()])))
         progress = st.progress(0)
@@ -391,9 +397,9 @@ if do_track:
             results_map = {}
             for i, res in enumerate(ex.map(get_raw_chain_for_ticker, tickers_to_track)):
                 if res is not None:
-                    all_contracts, price, change = res
+                    all_contracts, price, change, pos = res
                     if all_contracts is not None:
-                        results_map[tickers_to_track[i]] = (all_contracts, price, change)
+                        results_map[tickers_to_track[i]] = (all_contracts, price, change, pos)
                 progress.progress(min((i+1)/len(tickers_to_track), 1.0))
                 status.text("تابعت " + str(i+1) + " / " + str(len(tickers_to_track)))
         for key, w in st.session_state.whales.items():
@@ -401,7 +407,7 @@ if do_track:
             if ticker not in results_map:
                 updated[key] = w
                 continue
-            all_contracts, price, change = results_map[ticker]
+            all_contracts, price, change, pos = results_map[ticker]
             found = None
             for c in all_contracts:
                 if c["ticker"] == ticker and c["type"] == w["type"] and int(c["strike"]) == int(w["strike"]) and c["exp"] == w["exp"]:
@@ -417,7 +423,13 @@ if do_track:
             if first_oi > 0:
                 oi_change_pct = round((new_oi - first_oi) / first_oi * 100, 1)
             new_position = int(new_oi * new_entry * 100)
-            if new_oi < first_oi * 0.5:
+            # اذا الحوت CALL ووصل للقمة - نعتبره يطلع، حتى لو OI ثابت
+            is_at_top = False
+            if w["type"] == "CALL" and found["pos"] > 0.92:
+                is_at_top = True
+            if w["type"] == "PUT" and found["pos"] < 0.08:
+                is_at_top = True
+            if new_oi < first_oi * 0.5 or is_at_top:
                 status_txt = "EXITING"
                 oi_txt = str(oi_change_pct) + "% - يطلع"
             else:
@@ -439,8 +451,29 @@ if do_track:
             w2["oi_change_pct"] = oi_change_pct
             w2["oi_change_txt"] = oi_txt
             w2["status"] = status_txt
+            w2["pos"] = found["pos"]
+            w2["zone_txt"] = found["zone_txt"]
             updated[key] = w2
         st.session_state.whales = updated
         st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
         if len(removed) > 0:
-            st.warning("الحيت
+            st.warning("الحيتان هذي طلعت: " + ", ".join(removed))
+        st.success("تابعت " + str(len(updated)) + " حوت. اخر متابعة: " + st.session_state.last_scan)
+
+if len(st.session_state.whales) > 0:
+    whales_list = sorted(list(st.session_state.whales.values()), key=lambda x: (-x["position_premium"], x["ticker"]))
+    holding = [w for w in whales_list if w["status"] != "EXITING"]
+    exiting = [w for w in whales_list if w["status"] == "EXITING"]
+    st.write("اخر متابعة: " + st.session_state.last_scan + " | اخر اكتشاف: " + st.session_state.last_discover)
+    if len(holding) > 0:
+        st.markdown("### الحيتان اللي لسه داخلين")
+        st.markdown("### ارسال التوصيات")
+        show_send_buttons(holding, "top")
+        show_whales(holding)
+        st.markdown("### ارسال مرة ثانية")
+        show_send_buttons(holding, "bottom")
+    if len(exiting) > 0:
+        st.markdown("### الحيتان اللي بدات تطلع - لا تدخل جديد")
+        show_whales(exiting)
+else:
+    st.info("اضغط اكتشف حيتان جديدة - مرة وحدة في اليوم، الساعة 6:30 عصر. بعد كذا اضغط تابع الحيتان اللي عندي.")
