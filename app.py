@@ -1,5 +1,5 @@
-# الحيتان V7.4 - اصلاح زر مكرر + تثبيت النتائج
-# الزرين صار لهم اسم مختلف: فوق وتحت
+# الحيتان V7.5 - نتيجة ثابتة لا تتغير
+# اول فحص ينحفظ، وما يتغير الا بزر فحص جديد
 
 import streamlit as st
 import yfinance as yf
@@ -10,8 +10,8 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 import pytz
 
-st.set_page_config(page_title="توصيات V7.4", layout="wide")
-st.title("توصيات صانع السوق V7.4")
+st.set_page_config(page_title="توصيات V7.5", layout="wide")
+st.title("توصيات صانع السوق V7.5")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -21,13 +21,17 @@ except:
     CHAT_ID = ""
 
 RIYADH = pytz.timezone("Asia/Riyadh")
-HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Accept-Language": "en-US,en;q=0.9"}
 
 col1, col2 = st.columns(2)
 with col1:
     MIN_IV = st.slider("اقل IV %", 15, 60, 20)
 with col2:
     TOP_N = st.slider("كم توصية؟", 5, 15, 8)
+
+if "top" not in st.session_state:
+    st.session_state.top = None
+if "last_scan" not in st.session_state:
+    st.session_state.last_scan = ""
 
 def send_telegram(msg):
     if not BOT_TOKEN or not CHAT_ID:
@@ -72,6 +76,33 @@ def show_send_buttons(top, suffix):
             else:
                 st.error("ما انرسل - سوي خطوات التلجرام تحت")
     st.caption("واتساب: بيفتح لك الواتساب والتوصيات مكتوبة، اختر الشخص وارسل. تلجرام: يرسل تلقائي بدون ما تختار.")
+
+def show_cards(top):
+    for r in top:
+        if r["type"] == "CALL":
+            emoji_txt = "🟢"
+            border = "#22c55e"
+        else:
+            emoji_txt = "🔴"
+            border = "#ef4444"
+        if r["is_whale"]:
+            whale_txt = "🐋"
+            whale_note = "حوت مؤكد - صانع سوق داخل بقوة"
+        else:
+            whale_txt = "👀"
+            whale_note = "اشارة مراقبة - ادخل بنصف كمية"
+        strike_int = int(r["strike"])
+        st.markdown(
+            "<div style='border:2px solid " + border + "; border-radius:16px; padding:16px; margin-bottom:14px; background:#0f172a;'>"
+            + "<div style='font-size:22px; font-weight:800; color:white;'>" + emoji_txt + " " + r["ticker"] + " " + str(strike_int) + " " + r["type"] + " " + whale_txt + "</div>"
+            + "<div style='color:#cbd5e1; margin-top:6px; font-size:15px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + " (" + str(r["change"]) + "%) IV: " + str(r["iv"]) + "% Vol: " + str(r["vol_mult"]) + "x</div>"
+            + "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
+            + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> <span style='color:#94a3b8;'>Vol " + str(r["vol"]) + " | OI " + str(r["oi"]) + " | Score " + str(r["score"]) + "/4</span></div>"
+            + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
+            + "<div style='color:#94a3b8; margin-top:6px; font-size:13px;'>" + whale_note + "</div>"
+            + "</div>",
+            unsafe_allow_html=True
+        )
 
 @st.cache_data(ttl=3600)
 def get_universe():
@@ -132,6 +163,7 @@ def get_best_option(ticker):
             return None
         best = None
         best_score = -1
+        best_key = ""
         iv_val = 0
         today = datetime.date.today()
         for exp_str in exps[:3]:
@@ -150,7 +182,8 @@ def get_best_option(ticker):
                         cur_iv = float(valid_iv['impliedVolatility'].median() * 100)
                         if cur_iv > iv_val:
                             iv_val = cur_iv
-                    for idx, row in df.iterrows():
+                    df_sorted = df.sort_values(by=["volume", "strike"], ascending=[False, True])
+                    for idx, row in df_sorted.iterrows():
                         vol = int(row['volume'])
                         if vol < 100:
                             continue
@@ -185,8 +218,10 @@ def get_best_option(ticker):
                             score = score + 1000
                         if price < vwap and typ == "PUT":
                             score = score + 1000
-                        if score > best_score:
+                        key = str(score) + "_" + str(typ) + "_" + str(strike)
+                        if score > best_score or (score == best_score and key < best_key):
                             best_score = score
+                            best_key = key
                             best = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": vol, "oi": int(row['openInterest']), "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_mult": round(vol_mult, 2), "prev_high": round(prev_high, 2), "prev_low": round(prev_low, 2), "iv": round(iv_val, 1)}
             except:
                 continue
@@ -220,11 +255,22 @@ def get_best_option(ticker):
 universe = get_universe()
 st.write("الكون: " + str(len(universe)) + " سهم | IV فوق " + str(MIN_IV) + "% | بنعرض اقوى " + str(TOP_N) + " توصية")
 
-if st.button("افحص الان - جيب توصيات", type="primary"):
+c_scan, c_clear = st.columns(2)
+with c_scan:
+    do_scan = st.button("افحص الان - جيب توصيات", type="primary", use_container_width=True)
+with c_clear:
+    do_new = st.button("فحص جديد - امسح القديم", use_container_width=True)
+
+if do_new:
+    st.session_state.top = None
+    st.session_state.last_scan = ""
+    st.rerun()
+
+if do_scan:
     progress = st.progress(0)
     status = st.empty()
     results = []
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         for i, item in enumerate(ex.map(get_best_option, universe)):
             if item is not None:
                 results.append(item)
@@ -232,38 +278,19 @@ if st.button("افحص الان - جيب توصيات", type="primary"):
                 progress.progress(min((i+1)/len(universe), 1.0))
                 status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
     progress.progress(1.0)
-    results = sorted(results, key=lambda x: (x["score"], x["vol"], x["vol_mult"]), reverse=True)
+    results = sorted(results, key=lambda x: (-x["score"], -x["vol"], -x["vol_mult"], x["ticker"], x["strike"], x["type"]))
     top = results[:TOP_N]
-    status.text("خلص - اقوى " + str(len(top)) + " توصية")
+    st.session_state.top = top
+    st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
+    st.success("تم الحفظ - النتيجة الحين ثابتة وما بتتغير الا بزر فحص جديد")
+
+if st.session_state.top is not None:
+    st.write("اخر فحص: " + st.session_state.last_scan + " بتوقيت الرياض - النتيجة محفوظة")
     st.markdown("### ارسال التوصيات")
-    show_send_buttons(top, "top")
-    for r in top:
-        if r["type"] == "CALL":
-            emoji_txt = "🟢"
-            border = "#22c55e"
-        else:
-            emoji_txt = "🔴"
-            border = "#ef4444"
-        if r["is_whale"]:
-            whale_txt = "🐋"
-            whale_note = "حوت مؤكد - صانع سوق داخل بقوة"
-        else:
-            whale_txt = "👀"
-            whale_note = "اشارة مراقبة - ادخل بنصف كمية"
-        strike_int = int(r["strike"])
-        st.markdown(
-            "<div style='border:2px solid " + border + "; border-radius:16px; padding:16px; margin-bottom:14px; background:#0f172a;'>"
-            + "<div style='font-size:22px; font-weight:800; color:white;'>" + emoji_txt + " " + r["ticker"] + " " + str(strike_int) + " " + r["type"] + " " + whale_txt + "</div>"
-            + "<div style='color:#cbd5e1; margin-top:6px; font-size:15px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) Stock: $" + str(r["price"]) + " (" + str(r["change"]) + "%) IV: " + str(r["iv"]) + "% Vol: " + str(r["vol_mult"]) + "x</div>"
-            + "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
-            + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> <span style='color:#94a3b8;'>Vol " + str(r["vol"]) + " | OI " + str(r["oi"]) + " | Score " + str(r["score"]) + "/4</span></div>"
-            + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
-            + "<div style='color:#94a3b8; margin-top:6px; font-size:13px;'>" + whale_note + "</div>"
-            + "</div>",
-            unsafe_allow_html=True
-        )
+    show_send_buttons(st.session_state.top, "top")
+    show_cards(st.session_state.top)
     st.markdown("### ارسال مرة ثانية")
-    show_send_buttons(top, "bottom")
+    show_send_buttons(st.session_state.top, "bottom")
 else:
     st.info("اضغط افحص الان عشان تطلع لك بطاقات التوصيات.")
     st.write("واتساب - بدون اي اعداد:")
