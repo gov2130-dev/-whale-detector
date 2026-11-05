@@ -1,5 +1,4 @@
-# الحيتان V10 - صفحة نظيفة بدون شروط
-# كل الشروط داخل الكود فقط - الصفحة تطلع النتائج بس
+# الحيتان V10.1 - اصلاح عرض العنوان + اخفاء Delta و IV اذا صفر
 
 import streamlit as st
 import yfinance as yf
@@ -22,7 +21,6 @@ except:
 
 RIYADH = pytz.timezone("Asia/Riyadh")
 
-# الشروط كلها هنا داخل الكود فقط - ما تطلع في الصفحة
 MIN_ENTRY = 0.50
 MAX_ENTRY = 3.00
 MIN_DAYS = 4
@@ -90,7 +88,8 @@ def show_groups(groups):
             "<div style='background:#1e293b; border-radius:16px; padding:14px; margin-top:18px; margin-bottom:6px;'>"
             + "<div style='font-size:24px; font-weight:800; color:white;'>🐋 " + ticker + " - $" + str(price) + " (" + str(change) + "%)</div>"
             + "<div style='color:#86efac; margin-top:4px; font-size:15px;'>صانع السوق داخل في هالسهم - " + str(len(g["contracts"])) + " عقود - اختر حسب سيولتك</div>"
-            + "</div>"
+            + "</div>",
+            unsafe_allow_html=True
         )
         for r in g["contracts"]:
             if r["type"] == "CALL":
@@ -105,7 +104,7 @@ def show_groups(groups):
                 + "<div style='font-size:20px; font-weight:800; color:white;'>" + emoji_txt + " " + ticker + " " + str(strike_int) + " " + r["type"] + "</div>"
                 + "<div style='color:#cbd5e1; margin-top:6px; font-size:14px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) | Vol/OI: <b>" + str(r["vol_oi"]) + "x</b> | Premium: <b>$" + str(r["premium"]) + "</b></div>"
                 + "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
-                + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> | Delta: " + str(r["delta"]) + " | IV: " + str(r["iv"]) + "% | Vol: " + str(r["vol"]) + " | OI: " + str(r["oi"]) + "</div>"
+                + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> | Vol: " + str(r["vol"]) + " | OI: " + str(r["oi"]) + "</div>"
                 + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
                 + "</div>",
                 unsafe_allow_html=True
@@ -176,17 +175,7 @@ def check_mm(row, price):
     diff = abs(strike - price) / price
     if diff > 0.07:
         return None
-    delta = 0
-    try:
-        delta = abs(float(row['delta']))
-    except:
-        delta = 0
-    iv = 0
-    try:
-        iv = float(row['impliedVolatility']) * 100
-    except:
-        iv = 0
-    out = {"vol": vol, "oi": oi, "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "vol_oi": round(vol_oi, 2), "premium": premium, "delta": round(delta, 2), "iv": round(iv, 1)}
+    out = {"vol": vol, "oi": oi, "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "vol_oi": round(vol_oi, 2), "premium": premium}
     return out
 
 def get_mm_for_ticker(ticker):
@@ -242,7 +231,7 @@ def get_mm_for_ticker(ticker):
                             continue
                         strike = float(row['strike'])
                         entry = info["entry"]
-                        c = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": info["vol"], "oi": info["oi"], "bid": info["bid"], "ask": info["ask"], "entry": info["entry"], "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "iv": info["iv"], "vol_oi": info["vol_oi"], "premium": info["premium"], "delta": info["delta"]}
+                        c = {"ticker": ticker, "type": typ, "strike": strike, "exp": exp_str, "days": days_left, "vol": info["vol"], "oi": info["oi"], "bid": info["bid"], "ask": info["ask"], "entry": info["entry"], "price": round(price, 2), "vwap": round(vwap, 2), "change": round(change, 2), "vol_oi": info["vol_oi"], "premium": info["premium"]}
                         c["stop"] = round(entry * 0.5, 2)
                         c["t1"] = round(entry * 1.5, 2)
                         c["t2"] = round(entry * 2.3, 2)
