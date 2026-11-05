@@ -1,4 +1,5 @@
-# الحيتان V10.1 - اصلاح عرض العنوان + اخفاء Delta و IV اذا صفر
+# الحيتان V11 - صانع سوق حقيقي + سترايك اقل من 3% و اقل من 3 دولار
+# الشروط الثلاثة كلها لازم تتحقق مع بعض
 
 import streamlit as st
 import yfinance as yf
@@ -21,15 +22,19 @@ except:
 
 RIYADH = pytz.timezone("Asia/Riyadh")
 
+# الشروط الثلاثة - كلها داخل الكود فقط
 MIN_ENTRY = 0.50
 MAX_ENTRY = 3.00
 MIN_DAYS = 4
 MAX_DAYS = 21
-MIN_VOL_OI = 0.80
-MIN_PREMIUM = 50000
-MIN_VOL = 400
-MIN_OI = 300
+MIN_VOL_OI = 1.00
+MIN_PREMIUM = 100000
+MIN_VOL = 1000
+MIN_OI = 1000
 MAX_PER_TICKER = 4
+MAX_STRIKE_PCT = 0.03
+MAX_STRIKE_DOLLARS = 3.00
+MAX_SPREAD_PCT = 0.20
 
 if "groups" not in st.session_state:
     st.session_state.groups = None
@@ -99,11 +104,15 @@ def show_groups(groups):
                 emoji_txt = "🔴"
                 border = "#ef4444"
             strike_int = int(r["strike"])
+            if r["bid"] == 0:
+                bid_text = "<div style='color:#facc15; margin-top:10px; font-size:14px;'>⚠️ السوق مغلق - Entry هذا سعر اغلاق امس، تأكد من Bid الحي الساعة 5:30</div><div style='color:white; margin-top:4px; font-size:16px;'>Entry (اغلاق امس): <b>$" + str(r["entry"]) + "</b></div>"
+            else:
+                bid_text = "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
             st.markdown(
                 "<div style='border:2px solid " + border + "; border-radius:16px; padding:16px; margin-bottom:12px; margin-left:16px; background:#0f172a;'>"
                 + "<div style='font-size:20px; font-weight:800; color:white;'>" + emoji_txt + " " + ticker + " " + str(strike_int) + " " + r["type"] + "</div>"
                 + "<div style='color:#cbd5e1; margin-top:6px; font-size:14px;'>Exp: " + r["exp"] + " (" + str(r["days"]) + "d) | Vol/OI: <b>" + str(r["vol_oi"]) + "x</b> | Premium: <b>$" + str(r["premium"]) + "</b></div>"
-                + "<div style='color:white; margin-top:10px; font-size:16px;'>Entry: <b>$" + str(r["entry"]) + "</b> Bid: $" + str(r["bid"]) + " Ask: $" + str(r["ask"]) + "</div>"
+                + bid_text
                 + "<div style='color:#fca5a5; margin-top:4px; font-size:15px;'>Stop: <b>$" + str(r["stop"]) + "</b> | Vol: " + str(r["vol"]) + " | OI: " + str(r["oi"]) + "</div>"
                 + "<div style='color:#86efac; margin-top:8px; font-size:16px; font-weight:700;'>Target: $" + str(r["t1"]) + " (+50%) | $" + str(r["t2"]) + " (+130%) | $" + str(r["t3"]) + " (+220%)</div>"
                 + "</div>",
@@ -132,6 +141,17 @@ def get_universe():
     universe = sorted(universe)
     return universe
 
+def is_market_open_now():
+    now = datetime.datetime.now(RIYADH)
+    if now.weekday() >= 5:
+        return False
+    minutes = now.hour * 60 + now.minute
+    open_min = 17 * 60 + 30
+    close_min = 24 * 60
+    if minutes >= open_min or minutes < 60:
+        return True
+    return False
+
 def check_mm(row, price):
     vol = int(row['volume'])
     oi = int(row['openInterest'])
@@ -156,6 +176,9 @@ def check_mm(row, price):
         last = 0
     entry = 0
     if bid > 0 and ask > 0 and bid <= ask:
+        spread = (ask - bid) / bid
+        if spread > MAX_SPREAD_PCT:
+            return None
         entry = (bid + ask) / 2
     else:
         if last <= 0:
@@ -172,8 +195,11 @@ def check_mm(row, price):
     if premium < MIN_PREMIUM:
         return None
     strike = float(row['strike'])
-    diff = abs(strike - price) / price
-    if diff > 0.07:
+    dollar_diff = abs(strike - price)
+    pct_diff = dollar_diff / price
+    if pct_diff > MAX_STRIKE_PCT:
+        return None
+    if dollar_diff > MAX_STRIKE_DOLLARS:
         return None
     out = {"vol": vol, "oi": oi, "bid": round(bid, 2), "ask": round(ask, 2), "entry": round(entry, 2), "vol_oi": round(vol_oi, 2), "premium": premium}
     return out
@@ -262,20 +288,23 @@ if do_new:
     st.rerun()
 
 if do_scan:
-    progress = st.progress(0)
-    status = st.empty()
-    results = []
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for i, item in enumerate(ex.map(get_mm_for_ticker, universe)):
-            if item is not None:
-                results.append(item)
-            if i % 30 == 0:
-                progress.progress(min((i+1)/len(universe), 1.0))
-                status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
-    progress.progress(1.0)
-    results = sorted(results, key=lambda x: (-x["total_premium"], x["ticker"]))
-    st.session_state.groups = results
-    st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
+    if not is_market_open_now():
+        st.warning("السوق مغلق الحين - Yahoo يعطي بيانات قديمة وتطلع توصيات وهمية. افحص من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
+    else:
+        progress = st.progress(0)
+        status = st.empty()
+        results = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for i, item in enumerate(ex.map(get_mm_for_ticker, universe)):
+                if item is not None:
+                    results.append(item)
+                if i % 30 == 0:
+                    progress.progress(min((i+1)/len(universe), 1.0))
+                    status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
+        progress.progress(1.0)
+        results = sorted(results, key=lambda x: (-x["total_premium"], x["ticker"]))
+        st.session_state.groups = results
+        st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
 
 if st.session_state.groups is not None:
     if len(st.session_state.groups) == 0:
@@ -288,4 +317,4 @@ if st.session_state.groups is not None:
         st.markdown("### ارسال مرة ثانية")
         show_send_buttons(st.session_state.groups, "bottom")
 else:
-    st.info("اضغط افحص الان.")
+    st.info("اضغط افحص الان - من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
