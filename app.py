@@ -1,6 +1,5 @@
-# الحيتان V12 - اكتشاف مرة + متابعة تثبت
-# الفكرة: الحوت اذا دخل، يقعد يومين ثلاثة خمسة. ما نطرده اذا سعره تحرك.
-# نكتشفه مرة بـ Vol/OI، وبعدين نتابعه بـ OI فقط.
+# الحيتان V12.1 - سهم واحد = اتجاه واحد بس
+# صانع السوق يدخل صعود او يخرج نزول. ما يشتري الاثنين مع بعض.
 
 import streamlit as st
 import yfinance as yf
@@ -12,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytz
 
 st.set_page_config(page_title="توصيات صانع السوق", layout="wide")
-st.title("توصيات صانع السوق - V12")
+st.title("توصيات صانع السوق - V12.1")
 
 try:
     BOT_TOKEN = st.secrets["BOT_TOKEN"]
@@ -23,7 +22,6 @@ except:
 
 RIYADH = pytz.timezone("Asia/Riyadh")
 
-# --- شروط الاكتشاف - تستخدم مرة وحدة بس عشان نلقط الحوت اول مرة ---
 MIN_ENTRY_DISCOVER = 0.50
 MAX_ENTRY_DISCOVER = 3.00
 MIN_DAYS = 4
@@ -37,10 +35,8 @@ MAX_STRIKE_PCT = 0.03
 MAX_STRIKE_DOLLARS = 3.00
 MAX_SPREAD_PCT = 0.30
 
-# --- ذاكرة الحيتان ---
-# هنا نخزن الحيتان اللي اكتشفناها. ما تنحذف الا اذا الحوت باع.
 if "whales" not in st.session_state:
-    st.session_state.whales = {}  # key = TICKER_STRIKE_TYPE_EXP -> dict
+    st.session_state.whales = {}
 if "last_scan" not in st.session_state:
     st.session_state.last_scan = ""
 if "last_discover" not in st.session_state:
@@ -58,7 +54,6 @@ def send_telegram(msg):
 
 def build_msg(whales_list):
     msg = "توصيات صانع السوق - " + str(datetime.date.today()) + "\n\n"
-    # نجمع حسب السهم
     by_ticker = {}
     for w in whales_list:
         if w["ticker"] not in by_ticker:
@@ -66,7 +61,13 @@ def build_msg(whales_list):
         by_ticker[w["ticker"]].append(w)
     for ticker, lst in by_ticker.items():
         price = lst[0]["price"]
-        msg = msg + "=== " + ticker + " $" + str(price) + " ===\n"
+        # الاتجاه - كلهم نفس الاتجاه الحين
+        direction = lst[0]["type"]
+        if direction == "CALL":
+            dir_txt = "صعود"
+        else:
+            dir_txt = "نزول"
+        msg = msg + "=== " + ticker + " $" + str(price) + " - " + dir_txt + " ===\n"
         for r in lst:
             if r["type"] == "CALL":
                 e2 = "🟢"
@@ -94,7 +95,6 @@ def show_send_buttons(whales_list, suffix):
                 st.error("ما انرسل")
 
 def show_whales(whales_list):
-    # نجمع حسب السهم
     by_ticker = {}
     for w in whales_list:
         if w["ticker"] not in by_ticker:
@@ -103,10 +103,17 @@ def show_whales(whales_list):
     for ticker, lst in by_ticker.items():
         price = lst[0]["price"]
         change = lst[0]["change"]
+        direction = lst[0]["type"]
+        if direction == "CALL":
+            dir_txt = "صعود 🟢 - صانع السوق داخل"
+            dir_color = "#86efac"
+        else:
+            dir_txt = "نزول 🔴 - صانع السوق خارج"
+            dir_color = "#fca5a5"
         st.markdown(
             "<div style='background:#1e293b; border-radius:16px; padding:14px; margin-top:18px; margin-bottom:6px;'>"
             + "<div style='font-size:24px; font-weight:800; color:white;'>🐋 " + ticker + " - $" + str(price) + " (" + str(change) + "%)</div>"
-            + "<div style='color:#86efac; margin-top:4px; font-size:15px;'>صانع السوق داخل في هالسهم - " + str(len(lst)) + " عقود - اختر حسب سيولتك</div>"
+            + "<div style='color:" + dir_color + "; margin-top:4px; font-size:16px; font-weight:700;'>" + dir_txt + " - " + str(len(lst)) + " عقود بنفس الاتجاه</div>"
             + "</div>",
             unsafe_allow_html=True
         )
@@ -118,7 +125,6 @@ def show_whales(whales_list):
                 emoji_txt = "🔴"
                 border = "#ef4444"
             strike_int = int(r["strike"])
-            # حالة الحوت
             if r["status"] == "EXITING":
                 status_html = "<div style='background:#7f1d1d; color:white; padding:8px; border-radius:8px; margin-top:10px; font-size:14px; font-weight:700;'>⚠️ الحوت بدأ يطلع - OI نزل " + str(r["oi_change_pct"]) + "% - لا تدخل جديد</div>"
             elif r["status"] == "NEW":
@@ -175,7 +181,6 @@ def is_market_open_now():
     return False
 
 def check_discover(row, price):
-    # هذا يستخدم مرة وحدة بس عشان نلقط الحوت الجديد
     vol = int(row['volume'])
     oi = int(row['openInterest'])
     if vol < MIN_VOL:
@@ -228,7 +233,6 @@ def check_discover(row, price):
     return out
 
 def get_raw_chain_for_ticker(ticker):
-    # ترجع كل العقود الخام بدون فلترة - عشان المتابعة ما تحذف الحوت القديم
     try:
         tk = yf.Ticker(ticker)
         hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
@@ -286,7 +290,6 @@ universe = get_universe()
 st.write("الكون: " + str(len(universe)) + " سهم")
 st.write("الحيتان المتابعة الحين: " + str(len(st.session_state.whales)) + " حوت")
 
-# --- الازرار ---
 c1, c2, c3 = st.columns(3)
 with c1:
     do_discover = st.button("🔍 اكتشف حيتان جديدة", type="primary", use_container_width=True)
@@ -301,22 +304,22 @@ if do_clear:
     st.session_state.last_discover = ""
     st.rerun()
 
-# --- 1. الاكتشاف ---
+# --- 1. الاكتشاف - مع اصلاح الاتجاه الواحد ---
 if do_discover:
     if not is_market_open_now():
         st.warning("السوق مغلق الحين - افحص من 5:30 عصر الى 12 ليل بتوقيت الرياض.")
     else:
         progress = st.progress(0)
         status = st.empty()
-        new_count = 0
+        # نجمع كل المرشحين اول، ما نضيفهم على طول
+        # عشان نقدر نقارن CALL ضد PUT على نفس السهم
+        candidates_by_ticker = {}
         with ThreadPoolExecutor(max_workers=10) as ex:
             for i, res in enumerate(ex.map(get_raw_chain_for_ticker, universe)):
                 if res is not None:
                     all_contracts, price, change = res
                     if all_contracts is not None:
                         for c in all_contracts:
-                            # نطبق شروط الاكتشاف على العقود الجديدة بس
-                            # نبني row وهمي عشان check_discover
                             fake_row = {"volume": c["vol"], "openInterest": c["oi"], "bid": c["bid"], "ask": c["ask"], "lastPrice": c["entry"], "strike": c["strike"]}
                             info = check_discover(fake_row, price)
                             if info is None:
@@ -324,9 +327,9 @@ if do_discover:
                             key = c["ticker"] + "_" + str(int(c["strike"])) + "_" + c["type"] + "_" + c["exp"]
                             if key in st.session_state.whales:
                                 continue
-                            # حوت جديد - نسجله
+                            # نحسب مركز الحوت لهالعقد
                             position_premium = int(c["oi"] * c["entry"] * 100)
-                            whale = {
+                            cand = {
                                 "ticker": c["ticker"], "type": c["type"], "strike": c["strike"], "exp": c["exp"], "days": c["days"],
                                 "vol": c["vol"], "oi": c["oi"], "first_oi": c["oi"], "bid": c["bid"], "ask": c["ask"],
                                 "entry": c["entry"], "first_entry": c["entry"], "price": round(price, 2), "change": round(change, 2),
@@ -335,21 +338,50 @@ if do_discover:
                                 "status": "NEW", "oi_change_pct": 0, "oi_change_txt": "جديد", "stop": round(c["entry"] * 0.5, 2),
                                 "t1": round(c["entry"] * 1.5, 2), "t2": round(c["entry"] * 2.3, 2), "t3": round(c["entry"] * 3.2, 2),
                             }
-                            st.session_state.whales[key] = whale
-                            new_count += 1
+                            if c["ticker"] not in candidates_by_ticker:
+                                candidates_by_ticker[c["ticker"]] = []
+                            candidates_by_ticker[c["ticker"]].append(cand)
                 if i % 30 == 0:
                     progress.progress(min((i+1)/len(universe), 1.0))
                     status.text("فحصت " + str(i+1) + " / " + str(len(universe)))
         progress.progress(1.0)
+        # --- هنا الاصلاح: سهم واحد = اتجاه واحد ---
+        new_count = 0
+        for ticker, cands in candidates_by_ticker.items():
+            # اذا السهم عنده حوت قديم، لازم نلتزم باتجاهه، ما نضيف اتجاه عكسه
+            old_types = set([w["type"] for w in st.session_state.whales.values() if w["ticker"] == ticker])
+            if len(old_types) > 0:
+                # السهم عنده اتجاه قديم - نحذف اي مرشح عكس الاتجاه
+                old_type = list(old_types)[0]
+                cands = [c for c in cands if c["type"] == old_type]
+                if len(cands) == 0:
+                    continue
+            else:
+                # سهم جديد - نقارن مجموع CALL ضد مجموع PUT
+                call_total = sum([c["position_premium"] for c in cands if c["type"] == "CALL"])
+                put_total = sum([c["position_premium"] for c in cands if c["type"] == "PUT"])
+                # الاقوى يفوز، والثاني ينحذف كله
+                if call_total > 0 and put_total > 0:
+                    if call_total >= put_total:
+                        # صعود يفوز - نحذف كل PUT
+                        cands = [c for c in cands if c["type"] == "CALL"]
+                    else:
+                        # نزول يفوز - نحذف كل CALL
+                        cands = [c for c in cands if c["type"] == "PUT"]
+            # نرتب المرشحين وناخذ اقوى 4 بنفس الاتجاه
+            cands = sorted(cands, key=lambda x: (-x["position_premium"], x["entry"]))[:MAX_PER_TICKER]
+            for cand in cands:
+                key = cand["ticker"] + "_" + str(int(cand["strike"])) + "_" + cand["type"] + "_" + cand["exp"]
+                st.session_state.whales[key] = cand
+                new_count += 1
         st.session_state.last_discover = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
         st.success("اكتشفت " + str(new_count) + " حوت جديد. المجموع الحين: " + str(len(st.session_state.whales)))
 
-# --- 2. المتابعة - هذا هو المهم ---
+# --- 2. المتابعة ---
 if do_track:
     if len(st.session_state.whales) == 0:
         st.warning("ما عندك حيتان لسه. اضغط اكتشف حيتان جديدة اول.")
     else:
-        # نجيب اسهم الحيتان بس، مو كل الكون - عشان ما نضيع وقت
         tickers_to_track = sorted(list(set([w["ticker"] for w in st.session_state.whales.values()])))
         progress = st.progress(0)
         status = st.empty()
@@ -364,33 +396,26 @@ if do_track:
                         results_map[tickers_to_track[i]] = (all_contracts, price, change)
                 progress.progress(min((i+1)/len(tickers_to_track), 1.0))
                 status.text("تابعت " + str(i+1) + " / " + str(len(tickers_to_track)))
-        # الحين نحدث كل حوت
         for key, w in st.session_state.whales.items():
             ticker = w["ticker"]
             if ticker not in results_map:
-                # Yahoo ما رد - نخليه مثل ما هو، ما نحذفه
                 updated[key] = w
                 continue
             all_contracts, price, change = results_map[ticker]
-            # ندور على نفس العقد بالضبط: نفس السترايك ونفس النوع ونفس التاريخ
             found = None
             for c in all_contracts:
                 if c["ticker"] == ticker and c["type"] == w["type"] and int(c["strike"]) == int(w["strike"]) and c["exp"] == w["exp"]:
                     found = c
                     break
             if found is None:
-                # العقد اختفى تماما - الحوت طلع
                 removed.append(key)
                 continue
-            # الحوت لسه موجود - نحدث سعره و OI ومركزه، وما نطرده لو سعره طار فوق 3
             new_oi = found["oi"]
             new_entry = found["entry"]
             first_oi = w["first_oi"]
             oi_change_pct = 0
             if first_oi > 0:
                 oi_change_pct = round((new_oi - first_oi) / first_oi * 100, 1)
-            # بريموم المركز الجديد = OI الجديد × السعر الجديد × 100
-            # هذا هو اللي لازم يزيد ما ينقص
             new_position = int(new_oi * new_entry * 100)
             if new_oi < first_oi * 0.5:
                 status_txt = "EXITING"
@@ -414,30 +439,8 @@ if do_track:
             w2["oi_change_pct"] = oi_change_pct
             w2["oi_change_txt"] = oi_txt
             w2["status"] = status_txt
-            # الوقف والهدف يبقون على سعر الدخول الاول، ما نغيرهم اذا السعر تحرك
             updated[key] = w2
         st.session_state.whales = updated
         st.session_state.last_scan = datetime.datetime.now(RIYADH).strftime('%Y-%m-%d %H:%M')
         if len(removed) > 0:
-            st.warning("الحيتان هذي طلعت وبعناها من المتابعة: " + ", ".join(removed))
-        st.success("تابعت " + str(len(updated)) + " حوت. اخر متابعة: " + st.session_state.last_scan)
-
-# --- العرض ---
-if len(st.session_state.whales) > 0:
-    whales_list = sorted(list(st.session_state.whales.values()), key=lambda x: (-x["position_premium"], x["ticker"]))
-    # نفصل اللي يطلعون عن اللي ماسكين
-    holding = [w for w in whales_list if w["status"] != "EXITING"]
-    exiting = [w for w in whales_list if w["status"] == "EXITING"]
-    st.write("اخر متابعة: " + st.session_state.last_scan + " | اخر اكتشاف: " + st.session_state.last_discover)
-    if len(holding) > 0:
-        st.markdown("### 🐋 الحيتان اللي لسه داخلين")
-        st.markdown("### ارسال التوصيات")
-        show_send_buttons(holding, "top")
-        show_whales(holding)
-        st.markdown("### ارسال مرة ثانية")
-        show_send_buttons(holding, "bottom")
-    if len(exiting) > 0:
-        st.markdown("### ⚠️ الحيتان اللي بدأت تطلع - لا تدخل جديد")
-        show_whales(exiting)
-else:
-    st.info("اضغط اكتشف حيتان جديدة - مرة وحدة في اليوم، الساعة 6:30 عصر بتوقيت الرياض. بعد كذا اضغط تابع الحيتان اللي عندي كل شوي، ولا تكتشف من جديد.")
+            st.warning("الحيت
