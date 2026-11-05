@@ -1,12 +1,12 @@
-# V12.6 - كامل - نظام نقاط - ما يقول لك مافيه سهم أبداً
+# V12.7 - كامل - يمنع التناقض والقلبة
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import urllib.parse
 
 st.set_page_config(page_title="حيتان صانع السوق", layout="wide")
-st.title("🐋 حيتان صانع السوق - V12.6")
-st.caption("مفتوح بكل وقت - نظام نقاط - يطلع لك أقوى 5 دايماً")
+st.title("🐋 حيتان صانع السوق - V12.7")
+st.caption("مفتوح بكل وقت - لا يقلب من CALL لـ PUT في يوم واحد")
 
 FAVORITE_OPTIONS = [
     "SPY", "QQQ", "IWM", "DIA", "GLD", "SLV", "GDX", "GDXJ", "USO", "TLT",
@@ -36,7 +36,7 @@ def num(x):
 @st.cache_data(ttl=300)
 def get_df(ticker):
     try:
-        df = yf.download(ticker, period="3mo", interval="1d", progress=False, auto_adjust=False)
+        df = yf.download(ticker, period="6mo", interval="1d", progress=False, auto_adjust=False)
         if df is None or df.empty:
             return None
         if isinstance(df.columns, pd.MultiIndex):
@@ -53,68 +53,96 @@ def analyze(ticker, df):
         vol = df["Volume"]
         opn = df["Open"]
         c = num(close)
-        if c == 0 or len(close) < 30:
+        if c == 0 or len(close) < 50:
             return None
         low_90 = float(low.tail(90).min())
         high_90 = float(high.tail(90).max())
+        if high_90 == low_90:
+            return None
+
+        # --- 1. وين السعر في المسافة؟ ---
+        # 0% = في القاع، 100% = في القمة
+        pos = (c - low_90) / (high_90 - low_90) * 100
+
+        # --- منطقة محرمة: 35% الى 65% = في النص، لا نعطي إشارة ---
+        if 35 <= pos <= 65:
+            return None
+
         ma20 = float(close.tail(20).mean())
+        ma50 = float(close.tail(50).mean())
         last_vol = num(vol)
         avg_vol = float(vol.tail(20).mean())
         o = num(opn)
         h = num(high)
         l = num(low)
 
-        # --- نظام النقاط: كل شرط يعطي نقاط ---
-        score_call = 0
-        reasons_call = []
-        # 1. قريب من القاع (40 نقطة - أهم شي)
-        if c <= low_90 * 1.05:
-            score_call += 40
-            reasons_call.append("قاع قوي")
-        elif c <= low_90 * 1.10:
-            score_call += 25
-            reasons_call.append("قريب من القاع")
-        # 2. شمعة خضراء (20 نقطة)
-        if c > o:
-            score_call += 20
-            reasons_call.append("شمعة خضراء")
-        # 3. فوليوم عالي (20 نقطة)
-        if avg_vol > 0 and last_vol > avg_vol * 1.4:
-            score_call += 20
-            reasons_call.append("فوليوم حوت")
-        elif avg_vol > 0 and last_vol > avg_vol * 1.0:
-            score_call += 10
-            reasons_call.append("فوليوم فوق المتوسط")
-        # 4. فوق MA20 (20 نقطة)
-        if c > ma20:
-            score_call += 20
-            reasons_call.append("فوق MA20")
+        # --- 2. فلتر الترند: MA50 ---
+        # إذا السعر فوق MA50، الترند صاعد، ممنوع PUT
+        # إذا تحت MA50، الترند هابط، ممنوع CALL
+        uptrend = c > ma50
+        downtrend = c < ma50
 
-        score_put = 0
-        reasons_put = []
-        if c >= high_90 * 0.95:
-            score_put += 40
-            reasons_put.append("قمة ضعيفة")
-        elif c >= high_90 * 0.90:
-            score_put += 25
-            reasons_put.append("قريب من القمة")
-        if c < o:
-            score_put += 20
-            reasons_put.append("شمعة حمراء")
-        if avg_vol > 0 and last_vol > avg_vol * 1.4:
-            score_put += 20
-            reasons_put.append("فوليوم حوت")
-        if c < ma20:
-            score_put += 20
-            reasons_put.append("تحت MA20")
+        # --- 3. شمعتين تأكيد ---
+        # آخر شمعتين
+        c1 = float(close.iloc[-1])
+        c2 = float(close.iloc[-2])
+        o1 = float(opn.iloc[-1])
+        o2 = float(opn.iloc[-2])
+        two_green = (c1 > o1) and (c2 > o2)
+        two_red = (c1 < o1) and (c2 < o2)
 
-        # نختار الأقوى: CALL ولا PUT
-        if score_call >= score_put and score_call >= 50:
-            strength = "🔥 قوي" if score_call >= 80 else "✅ متوسط" if score_call >= 65 else "⚠️ ضعيف - انتظر تأكيد"
-            return {"ticker": ticker, "signal": "CALL - دخول صانع سوق", "kind": "⭐ مفضلة - قاع", "price": round(c, 2), "entry": round(h, 2), "stop": round(low_90, 2), "condition": " + ".join(reasons_call), "score": score_call, "strength": strength}
-        if score_put > score_call and score_put >= 50:
-            strength = "🔥 قوي" if score_put >= 80 else "✅ متوسط" if score_put >= 65 else "⚠️ ضعيف - انتظر تأكيد"
-            return {"ticker": ticker, "signal": "PUT - دخول صانع سوق", "kind": "⭐ مفضلة - قمة", "price": round(c, 2), "entry": round(l, 2), "stop": round(high_90, 2), "condition": " + ".join(reasons_put), "score": score_put, "strength": strength}
+        # --- CALL: لازم يكون في منطقة القاع 0-35% + ترند صاعد أو فوق MA20 + شمعتين خضراء ---
+        if pos <= 35 and uptrend:
+            score = 0
+            reasons = []
+            if pos <= 15:
+                score += 40
+                reasons.append("في القاع تماماً")
+            else:
+                score += 25
+                reasons.append("في منطقة القاع")
+            if two_green:
+                score += 30
+                reasons.append("شمعتين خضراء تأكيد")
+            elif c > o:
+                score += 15
+                reasons.append("شمعة خضراء واحدة")
+            if avg_vol > 0 and last_vol > avg_vol * 1.4:
+                score += 20
+                reasons.append("فوليوم حوت")
+            if c > ma20:
+                score += 10
+                reasons.append("فوق MA20")
+            if score >= 60:
+                strength = "🔥 قوي" if score >= 85 else "✅ متوسط"
+                return {"ticker": ticker, "signal": "CALL", "kind": "قاع - ترند صاعد", "price": round(c, 2), "entry": round(h, 2), "stop": round(low_90, 2), "condition": " + ".join(reasons), "score": score, "strength": strength, "pos": round(pos, 1)}
+
+        # --- PUT: لازم يكون في منطقة القمة 65-100% + ترند هابط + شمعتين حمراء ---
+        if pos >= 65 and downtrend:
+            score = 0
+            reasons = []
+            if pos >= 85:
+                score += 40
+                reasons.append("في القمة تماماً")
+            else:
+                score += 25
+                reasons.append("في منطقة القمة")
+            if two_red:
+                score += 30
+                reasons.append("شمعتين حمراء تأكيد")
+            elif c < o:
+                score += 15
+                reasons.append("شمعة حمراء واحدة")
+            if avg_vol > 0 and last_vol > avg_vol * 1.4:
+                score += 20
+                reasons.append("فوليوم حوت")
+            if c < ma20:
+                score += 10
+                reasons.append("تحت MA20")
+            if score >= 60:
+                strength = "🔥 قوي" if score >= 85 else "✅ متوسط"
+                return {"ticker": ticker, "signal": "PUT", "kind": "قمة - ترند هابط", "price": round(c, 2), "entry": round(l, 2), "stop": round(high_90, 2), "condition": " + ".join(reasons), "score": score, "strength": strength, "pos": round(pos, 1)}
+
         return None
     except Exception:
         return None
@@ -136,42 +164,26 @@ if st.button("🔍 اكتشف حيتان جديدة", use_container_width=True):
                 results.append(r)
     bar.empty()
     txt.empty()
-
-    # رتب بالأقوى، وخذ أقوى 5 بس - عشان ما يطلع لك 22 ولا 0
     results = sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
     if len(results) == 0:
-        st.warning("حتى بالنقاط مافيه سهم وصل 50 - السوق هادي الحين، لا تدخل شي")
+        st.warning("مافيه سهم في قاع أو قمة واضحة الحين - كل الأسهم في النص - لا تدخل شي، هذا هو الصح")
+        st.info("السبب: SPY و QQQ الحين في النص بين القاع والقمة، عشان كذا ما نعطيك إشارة عليهم. قبل كان الكود يعطيك إشارة وهمية عليهم.")
     else:
-        st.success(f"أقوى {len(results)} سهم الحين - مرتبة من الأقوى للأضعف")
-
-        msg_lines = ["🐋 حيتان صانع السوق - V12.6", ""]
+        st.success(f"أقوى {len(results)} سهم في منطقة واضحة - مو في النص")
+        msg_lines = ["🐋 حيتان صانع السوق - V12.7", ""]
         for m in results:
-            msg_lines.append(f"{m['ticker']} | {m['signal']} | نقاط: {m['score']} | {m['strength']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']}")
+            msg_lines.append(f"{m['ticker']} | {m['signal']} | نقاط: {m['score']} | {m['strength']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | موقع السعر: {m['pos']}% من القاع")
         msg_text = "\n".join(msg_lines)
         encoded = urllib.parse.quote(msg_text)
-
         if phone.strip() != "":
-            wa_link = f"https://wa.me/{phone.strip()}?text={encoded}"
-            st.link_button("📲 ارسل كل النتائج لهذا الرقم واتساب", wa_link, use_container_width=True)
+            st.link_button("📲 ارسل كل النتائج واتساب", f"https://wa.me/{phone.strip()}?text={encoded}", use_container_width=True)
         else:
-            wa_link_all = f"https://wa.me/?text={encoded}"
-            st.link_button("📲 ارسل كل النتائج واتساب - اختر من ترسل له", wa_link_all, use_container_width=True)
-
+            st.link_button("📲 ارسل كل النتائج واتساب", f"https://wa.me/?text={encoded}", use_container_width=True)
         st.code(msg_text, language="text")
         st.divider()
-
         for m in results:
-            single = f"🐋 {m['ticker']} | {m['signal']} | نقاط: {m['score']} | {m['strength']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']}"
-            single_enc = urllib.parse.quote(single)
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.info(f"{m['ticker']} | {m['signal']} | نقاط: {m['score']} | {m['strength']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | {m['condition']}")
-            with col2:
-                if phone.strip() != "":
-                    st.link_button("واتساب", f"https://wa.me/{phone.strip()}?text={single_enc}")
-                else:
-                    st.link_button("واتساب", f"https://wa.me/?text={single_enc}")
+            st.info(f"{m['ticker']} | {m['signal']} | نقاط: {m['score']} | {m['strength']} | السعر: {m['price']} | الدخول: {m['entry']} | الوقف: {m['stop']} | موقع السعر: {m['pos']}% من القاع | {m['condition']}")
 
 st.divider()
-st.caption("نظام نقاط: 100 = كامل. فوق 80 قوي، فوق 65 متوسط، تحت 65 انتظر تأكيد ولا تدخل بكامل المبلغ")
+st.caption("قاعدة جديدة: إذا السهم في النص 35%-65%، ما نعطيك إشارة. لازم يكون في قاع واضح أو قمة واضحة + ترند يأكده + شمعتين تأكيد")
