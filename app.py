@@ -1,47 +1,23 @@
-# V14.1 - كامل - نمنع Bid/Ask الوهمي في البري ماركت
+# V15 - كامل - شروط حازمة لصانع السوق
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import urllib.parse
-from datetime import datetime, date, time
-import pytz
+from datetime import datetime, date
 
 st.set_page_config(page_title="حيتان صانع السوق", layout="wide")
-st.title("🐋 حيتان صانع السوق - V14.1")
-st.caption("الدخول من إغلاق أمس فقط - ممنوع Bid/Ask في البري ماركت - لأن السبريد وهمي")
+st.title("🐋 حيتان صانع السوق - V15 - شروط حازمة")
+st.caption("لا توصية إلا إذا صانع السوق داخل بقوة: Vol > 2x OI + Premium > 2M + سترايك ATM + اكسبايري 2-5 أيام + سبريد < 10%")
 
-FAVORITE_OPTIONS = ["SPY","QQQ","AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL","GDX","GLD","SLV","FSLR","ENPH","BABA","BIDU","CVX","COIN","PLTR"]
+# حذفنا SPY و QQQ - هذي تحوط، مو اتجاه، وهي اللي خسرتك أمس
+FAVORITE_OPTIONS = ["AAPL","MSFT","NVDA","TSLA","AMD","META","AMZN","GOOGL","COIN","PLTR","BABA","CVX","FSLR","ENPH","GDX","GLD","SLV"]
 
-def get_market_status():
-    sa_tz = pytz.timezone("Asia/Riyadh")
-    now_sa = datetime.now(sa_tz)
-    weekday = now_sa.weekday()
-    t = now_sa.time()
-    open_t = time(17, 30)
-    close_t = time(23, 59)
-    is_weekend = weekday >= 5
-    is_open = (not is_weekend) and (open_t <= t <= close_t)
-    return is_open, now_sa
-
-is_open, now_sa = get_market_status()
-
-if not is_open:
-    st.error(f"⛔ السوق مسكر / بري ماركت - الساعة عندك {now_sa.strftime('%H:%M')}")
-    st.warning("في البري ماركت، صانع السوق يوسع السبريد عشان يخدعك. مثال: Bid 1$ و Ask 19$، المنتصف يطلع 10$، وهذا وهم. عشان كذا في V14.1 نمنع استخدام Bid/Ask الحين، ونستخدم سعر إغلاق أمس فقط.")
-    st.info("التوصيات اللي تحت هي على إغلاق أمس، مو على أسعار البري ماركت الوهمية. إذا دخلت، ادخل على سعر الافتتاح الحقيقي، مو على السعر المكتوب هنا.")
-else:
-    st.success(f"✅ السوق فاتح - الساعة {now_sa.strftime('%H:%M')} - الأسعار الحين حقيقية")
-
-def get_mm_flow(ticker, use_live):
+def get_mm_flow_strict(ticker):
     try:
         tk = yf.Ticker(ticker)
         exps = tk.options
         if not exps:
-            return None
-        best_call = None
-        best_put = None
-        best_call_score = 0
-        best_put_score = 0
+            return None, ""
         stock_price = 0
         try:
             stock_price = float(tk.fast_info.get("lastPrice", 0) or 0)
@@ -54,17 +30,25 @@ def get_mm_flow(ticker, use_live):
         except Exception:
             pass
         if stock_price == 0:
-            return None
-        for exp in exps[:6]:
+            return None, ""
+
+        best = None
+        best_score = 0
+        best_reason = ""
+
+        for exp in exps[:8]:
             try:
                 exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
                 days = (exp_date - date.today()).days
-                if days < 0 or days > 14:
+                # شرط 4: اكسبايري 2-5 أيام فقط - ممنوع 0d و 1d اللي يقتل العقد
+                if days < 2 or days > 5:
                     continue
                 chain = tk.option_chain(exp)
-                # CALLs
-                if chain.calls is not None and not chain.calls.empty:
-                    for _, row in chain.calls.iterrows():
+                # نفحص CALL و PUT
+                for direction, df_opt in [("CALL", chain.calls), ("PUT", chain.puts)]:
+                    if df_opt is None or df_opt.empty:
+                        continue
+                    for _, row in df_opt.iterrows():
                         try:
                             vol = float(row["volume"]) if pd.notna(row["volume"]) else 0
                             oi = float(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
@@ -72,124 +56,85 @@ def get_mm_flow(ticker, use_live):
                             ask = float(row["ask"]) if pd.notna(row["ask"]) else 0
                             last = float(row["lastPrice"]) if pd.notna(row["lastPrice"]) else 0
                             strike = float(row["strike"])
-                            if vol < 200:
+                            # شرط 1: Vol > 1000 عقد
+                            if vol < 1000:
                                 continue
+                            # شرط 1: Vol > 2x OI - دخول جديد ضخم
                             ratio = vol / (oi + 1)
-                            if ratio < 0.8:
+                            if ratio < 2.0:
                                 continue
-                            # --- هنا التصحيح ---
-                            # إذا السوق مسكر: نستخدم lastPrice فقط - سعر إغلاق أمس الحقيقي
-                            # إذا السوق فاتح: نستخدم منتصف Bid/Ask - لأنه حقيقي الحين
-                            if use_live:
-                                if bid <= 0:
-                                    continue
-                                # في السوق الفاتح، إذا السبريد أكبر من 30% من السعر، نتجاهله - هذا تلاعب
-                                spread = (ask - bid) / ((bid + ask)/2 + 0.01) * 100
-                                if spread > 30:
-                                    continue
-                                entry_price = (bid + ask) / 2
-                                bid_show = round(bid, 2)
-                            else:
-                                if last <= 0:
-                                    continue
-                                entry_price = last
-                                bid_show = round(last, 2)  # في البري ماركت، نعرض إغلاق أمس كـ Bid، مو Bid الوهمي
-                            premium = vol * entry_price * 100
+                            # شرط 3: سترايك قريب - أقل من 2% من السعر
                             dist = abs(strike - stock_price) / stock_price * 100
-                            if dist > 8:
+                            if dist > 2.0:
                                 continue
-                            score = premium * ratio
-                            if score > best_call_score:
-                                best_call_score = score
-                                best_call = {"ticker": ticker, "direction": "CALL", "strike": strike, "exp": exp, "days": days, "stock": round(stock_price, 2), "entry": round(entry_price, 2), "bid": bid_show, "vol": int(vol), "oi": int(oi), "ratio": round(ratio, 2), "premium": int(premium)}
-                        except Exception:
-                            continue
-                # PUTs
-                if chain.puts is not None and not chain.puts.empty:
-                    for _, row in chain.puts.iterrows():
-                        try:
-                            vol = float(row["volume"]) if pd.notna(row["volume"]) else 0
-                            oi = float(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
-                            bid = float(row["bid"]) if pd.notna(row["bid"]) else 0
-                            ask = float(row["ask"]) if pd.notna(row["ask"]) else 0
-                            last = float(row["lastPrice"]) if pd.notna(row["lastPrice"]) else 0
-                            strike = float(row["strike"])
-                            if vol < 200:
+                            # شرط 5: سبريد ضيق - أقل من 10%
+                            if bid <= 0 or ask <= 0:
                                 continue
-                            ratio = vol / (oi + 1)
-                            if ratio < 0.8:
+                            mid_live = (bid + ask) / 2
+                            spread = (ask - bid) / (mid_live + 0.01) * 100
+                            if spread > 10:
                                 continue
-                            if use_live:
-                                if bid <= 0:
-                                    continue
-                                spread = (ask - bid) / ((bid + ask)/2 + 0.01) * 100
-                                if spread > 30:
-                                    continue
-                                entry_price = (bid + ask) / 2
-                                bid_show = round(bid, 2)
-                            else:
-                                if last <= 0:
-                                    continue
-                                entry_price = last
-                                bid_show = round(last, 2)
+                            # سعر الدخول: نستخدم lastPrice إذا كان السوق مسكر، و Mid إذا كان فاتح والسبريد ضيق
+                            # نستخدم lastPrice دائماً في V15 عشان ما ننخدع بالبري ماركت
+                            if last <= 0:
+                                continue
+                            entry_price = last
+                            # شرط 2: Premium > 2 مليون دولار
                             premium = vol * entry_price * 100
-                            dist = abs(strike - stock_price) / stock_price * 100
-                            if dist > 8:
+                            if premium < 2000000:
                                 continue
+                            # كل الشروط تحققت - هذا هو صانع السوق الحقيقي
                             score = premium * ratio
-                            if score > best_put_score:
-                                best_put_score = score
-                                best_put = {"ticker": ticker, "direction": "PUT", "strike": strike, "exp": exp, "days": days, "stock": round(stock_price, 2), "entry": round(entry_price, 2), "bid": bid_show, "vol": int(vol), "oi": int(oi), "ratio": round(ratio, 2), "premium": int(premium)}
+                            if score > best_score:
+                                best_score = score
+                                best = {"ticker": ticker, "direction": direction, "strike": strike, "exp": exp, "days": days, "stock": round(stock_price, 2), "entry": round(entry_price, 2), "bid": round(bid, 2), "ask": round(ask, 2), "vol": int(vol), "oi": int(oi), "ratio": round(ratio, 2), "premium": int(premium), "spread": round(spread, 1), "dist": round(dist, 2)}
+                                best_reason = f"Vol {int(vol)} = {ratio:.1f}x OI | Premium ${premium:,.0f} | سترايك {dist:.1f}% من السعر | سبريد {spread:.1f}%"
                         except Exception:
                             continue
             except Exception:
                 continue
-        if best_call is None and best_put is None:
-            return None
-        if best_call is not None and best_put is None:
-            return best_call
-        if best_put is not None and best_call is None:
-            return best_put
-        if best_call_score > best_put_score * 1.5:
-            return best_call
-        if best_put_score > best_call_score * 1.5:
-            return best_put
-        return None
+
+        # إذا لقينا CALL و PUT الاثنين، نأخذ الأقوى بفرق كبير
+        # هنا نحن نأخذ الأقوى فقط من كل الاتجاهين في الحلقة فوق
+        return best, best_reason
     except Exception:
-        return None
+        return None, ""
 
 st.subheader("📲 ارسال للواتساب")
 phone = st.text_input("رقم الواتساب (اختياري)", placeholder="9665XXXXXXXX")
+st.error("⚠️ درس أمس: QQQ PUT و SPY PUT خسروا 50-70% لأن SPY و QQQ تحوط، مو اتجاه. صانع السوق كان يبيع لك، مو يشتري معك. في V15 حذفناهم.")
+st.info("💡 قاعدة V15: إذا ما طلعت توصية، معناها صانع السوق ما دخل بقوة اليوم. لا تدخل شي. الدخول الضعيف هو اللي يصفر العقد.")
 
-if st.button("🔍 اكتشف وين دخل صانع السوق", use_container_width=True):
+if st.button("🔍 اكتشف دخول صانع السوق الحقيقي", use_container_width=True):
     results = []
     bar = st.progress(0)
     txt = st.empty()
     for i, t in enumerate(FAVORITE_OPTIONS):
-        txt.text(f"يفحص فلو صانع السوق: {t} - {i+1}/{len(FAVORITE_OPTIONS)}")
+        txt.text(f"يفحص بشروط حازمة: {t} - {i+1}/{len(FAVORITE_OPTIONS)}")
         bar.progress((i + 1) / len(FAVORITE_OPTIONS))
-        reco = get_mm_flow(t, use_live=is_open)
+        reco, reason = get_mm_flow_strict(t)
         if reco is not None:
             entry = reco["entry"]
             reco["stop"] = round(entry * 0.5, 2)
             reco["t1"] = round(entry * 1.5, 2)
             reco["t2"] = round(entry * 2.3, 2)
             reco["t3"] = round(entry * 3.2, 2)
+            reco["reason"] = reason
             results.append(reco)
     bar.empty()
     txt.empty()
-    results = sorted(results, key=lambda x: x["premium"], reverse=True)[:5]
+    results = sorted(results, key=lambda x: x["premium"], reverse=True)[:3]  # نعطي 3 فقط، الأقوى
     if len(results) == 0:
-        st.warning("مافيه دخول واضح لصانع السوق الحين.")
+        st.warning("مافيه دخول حقيقي لصانع السوق اليوم - كل الفوليوم ضعيف أو ريتيل أو تحوط. لا تدخل شي اليوم. هذا هو الصح.")
+        st.caption("قبل V15 كنا نعطيك أي فوليوم، حتى لو ضعيف، عشان كذا كنت تدخل وتخسر. الحين إذا ما فيه حوت حقيقي، ما نعطيك شي.")
     else:
-        label = "سعر لايف" if is_open else "سعر إغلاق أمس - لا تدخل على هذا السعر، انتظر الافتتاح"
-        st.success(f"صانع السوق دخل في {len(results)} سهم - الدخول محسوب على: {label}")
+        st.success(f"صانع السوق داخل بقوة في {len(results)} سهم فقط - هذي توصيات حازمة، مو أي فوليوم")
         msg_lines = []
         for m in results:
             emoji = "🟢" if m["direction"] == "CALL" else "🔴"
             msg_lines.append(f"{emoji} {m['ticker']} {m['strike']} {m['direction']} 🐋")
             msg_lines.append(f"Exp: {m['exp']} ({m['days']}d) Stock: ${m['stock']}")
-            msg_lines.append(f"Entry: ${m['entry']} ({label}) Vol: {m['vol']} OI: {m['oi']} Flow: ${m['premium']:,}")
+            msg_lines.append(f"Entry: ${m['entry']} (إغلاق أمس) Vol: {m['vol']} OI: {m['oi']} Ratio: {m['ratio']}x Flow: ${m['premium']:,}")
             msg_lines.append(f"Stop: ${m['stop']}")
             msg_lines.append(f"Target: ${m['t1']} (+50%) | ${m['t2']} (+130%) | ${m['t3']} (+220%)")
             msg_lines.append("")
@@ -206,11 +151,13 @@ if st.button("🔍 اكتشف وين دخل صانع السوق", use_container_
             st.markdown(f"""
 **{emoji} {m['ticker']} {m['strike']} {m['direction']} 🐋**  
 Exp: {m['exp']} ({m['days']}d) Stock: ${m['stock']}  
-Entry: ${m['entry']} ({label}) | Vol: {m['vol']} | OI: {m['oi']} | Flow: ${m['premium']:,}  
+Entry: ${m['entry']} (إغلاق أمس)  
+**🔥 إثبات صانع السوق: {m['reason']}**  
 Stop: ${m['stop']}  
 Target: ${m['t1']} (+50%) | ${m['t2']} (+130%) | ${m['t3']} (+220%)
 """)
             st.divider()
+            st.caption("⚠️ قاعدة الدخول: لا تدخل في أول 15 دقيقة. انتظر السهم يثبت فوق سعر الدخول للـ CALL أو تحت سعر الدخول للـ PUT. إذا نزل 30% من الدخول، اخرج فوراً، لا تنتظر الوقف. صانع السوق إذا دخل صح، السهم ما ينزل 70% ثاني يوم.")
 
 st.divider()
-st.caption("V14.1: في البري ماركت نستخدم lastPrice فقط. في السوق الفاتح نستخدم Bid/Ask بشرط السبريد أقل من 30%. إذا السبريد وهمي، نتجاهل الأوبشن.")
+st.caption("V15: شروط حازمة - Vol > 1000 + Vol/OI > 2x + Premium > 2M + سترايك < 2% + اكسبايري 2-5 أيام + سبريد < 10%. حذف SPY و QQQ. نعطي 3 توصيات فقط.")
