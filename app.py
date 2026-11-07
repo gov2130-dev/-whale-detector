@@ -6,16 +6,16 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ نفس شروط البوت المرجعي - عقود 3 وأقل فقط")
+st.caption("✅ نفس شروط البوت المرجعي - عقود 2 إلى 3 - أفضل 5 فقط")
 
-# ===== شروط البوت المرجعي + طلبك =====
-MIN_PREMIUM = 100000  # أقل Premium عنده 104,709
-MIN_VOL = 300         # أقل كمية عنده 309
-MIN_PRICE = 2.0       # أقل سعر عقد عنده 2.09
-MAX_PRICE = 3.0       # طلبك: 3 وأقل
-MIN_RATIO = 1.2       # Volume / OI
-MAX_DAYS = 14         # انتهاء إلى 14 يوم
-MAX_DISTANCE = 0.15   # السترايك قريب من السعر 15%
+MIN_PREMIUM = 100000
+MIN_VOL = 300
+MIN_PRICE = 2.0
+MAX_PRICE = 3.0
+MIN_RATIO = 1.2
+MAX_DAYS = 14
+MAX_DISTANCE = 0.15
+TOP_N = 5  # جديد: نرسل أفضل 5 فقط مثل البوت المرجعي
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -50,6 +50,7 @@ if "seen" not in st.session_state:
 if st.button("🔍 افحص الآن", use_container_width=True):
     st.session_state.results = []
     st.session_state.seen = set()
+    all_candidates = []
     tickers = ["BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ","COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR","LLY","UNH","XOM","CVX"]
     with st.spinner("جاري الفحص..."):
         for symbol in tickers:
@@ -69,6 +70,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     continue
                 best = None
                 best_score = 0
+                best_premium = 0
                 for exp in ticker.options[:4]:
                     days = (datetime.strptime(exp, "%Y-%m-%d") - datetime.now()).days
                     if days < 0 or days > MAX_DAYS:
@@ -82,7 +84,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             strike = row['strike']
                             if vol < MIN_VOL or oi == 0:
                                 continue
-                            # ===== هنا طلبك: 3 وأقل =====
                             if price < MIN_PRICE or price > MAX_PRICE:
                                 continue
                             premium = vol * price * 100
@@ -97,6 +98,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                                 continue
                             if vol/oi >= MIN_RATIO and score > best_score:
                                 best_score = score
+                                best_premium = premium
                                 best = (opt_type, row, exp, price, vol, key)
                 if best:
                     opt_type, row, exp, price, vol, key = best
@@ -104,10 +106,13 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     entry = round(float(price), 2)
                     stop = round(entry * 0.67, 2)
                     msg = format_message(symbol, company, opt_type, row['strike'], exp, entry, stop, vol)
-                    st.session_state.results.append((symbol, msg))
+                    all_candidates.append((best_premium, symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - عقود 3 وأقل")
+        # ===== هنا الترتيب: أفضل 5 فقط =====
+        all_candidates.sort(key=lambda x: x[0], reverse=True)
+        st.session_state.results = [(s, m) for _, s, m in all_candidates[:TOP_N]]
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - أفضل 5")
 
 if st.session_state.results:
     st.divider()
