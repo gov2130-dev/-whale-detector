@@ -6,8 +6,9 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ نفس شروط البوت المرجعي - عقود 2 إلى 3 - أفضل 5 فقط")
+st.caption("✅ 50 سهم قيادي - تذبذب عالي - سبريد ضيق - عقود 2 إلى 3")
 
+# ===== الشروط =====
 MIN_PREMIUM = 100000
 MIN_VOL = 300
 MIN_PRICE = 2.0
@@ -15,7 +16,8 @@ MAX_PRICE = 3.0
 MIN_RATIO = 1.2
 MAX_DAYS = 14
 MAX_DISTANCE = 0.15
-TOP_N = 5  # جديد: نرسل أفضل 5 فقط مثل البوت المرجعي
+MAX_SPREAD = 0.15  # جديد: السبريد أقل من 15%
+TOP_N = 5
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -51,8 +53,15 @@ if st.button("🔍 افحص الآن", use_container_width=True):
     st.session_state.results = []
     st.session_state.seen = set()
     all_candidates = []
-    tickers = ["BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ","COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR","LLY","UNH","XOM","CVX"]
-    with st.spinner("جاري الفحص..."):
+    # ===== 50 سهم قيادي - تذبذب عالي - سبريد ضيق =====
+    tickers = [
+        "BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ",
+        "COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR",
+        "LLY","UNH","XOM","CVX",
+        "UBER","SHOP","SQ","CRWD","PANW","ARM","MARA","RIOT","SOFI","DKNG",
+        "RBLX","U","INTC","BA","DIS","NET","SNOW","DDOG","SE","MELI"
+    ]
+    with st.spinner("جاري فحص 50 سهم..."):
         for symbol in tickers:
             try:
                 ticker = yf.Ticker(symbol)
@@ -82,10 +91,17 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
                             price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
                             strike = row['strike']
+                            bid = row.get('bid', 0) if pd.notna(row.get('bid', 0)) else 0
+                            ask = row.get('ask', 0) if pd.notna(row.get('ask', 0)) else 0
                             if vol < MIN_VOL or oi == 0:
                                 continue
                             if price < MIN_PRICE or price > MAX_PRICE:
                                 continue
+                            # ===== فلتر السبريد الجديد =====
+                            if bid > 0 and ask > 0 and price > 0:
+                                spread = (ask - bid) / price
+                                if spread > MAX_SPREAD:
+                                    continue
                             premium = vol * price * 100
                             if premium < MIN_PREMIUM:
                                 continue
@@ -109,10 +125,9 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     all_candidates.append((best_premium, symbol, msg))
             except:
                 continue
-        # ===== هنا الترتيب: أفضل 5 فقط =====
         all_candidates.sort(key=lambda x: x[0], reverse=True)
         st.session_state.results = [(s, m) for _, s, m in all_candidates[:TOP_N]]
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - أفضل 5")
+    st.success(f"✅ فحصت 50 سهم - لقيت {len(st.session_state.results)} سهم - أفضل 5")
 
 if st.session_state.results:
     st.divider()
