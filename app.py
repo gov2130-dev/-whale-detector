@@ -4,7 +4,6 @@ from datetime import datetime
 import pandas as pd
 import urllib.parse
 import re
-import requests
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
@@ -23,27 +22,6 @@ def clean_phone(raw):
 raw_phone = st.text_input("رقم الواتس", value="0555371577")
 MY_WHATSAPP = clean_phone(raw_phone)
 st.caption(f"✅ الرقم الصح: {MY_WHATSAPP}")
-
-# ===== اعدادات الارسال - اختر الطريقتين =====
-st.write("### 📲 طريقة الارسال")
-send_mode = st.radio("كيف تبي يرسل؟", 
-    ["كل توصية لوحدها", "الكل في رسالة واحدة", "بكلا الطريقتين - لوحدها + مجمعة"],
-    horizontal=False)
-
-# خيار CallMeBot للارسال التلقائي - اختياري
-with st.expander("⚙️ تبي ارسال تلقائي بدون ما تفتح الواتس؟ (اختياري)"):
-    st.write("اذا تبيه يرسل لحاله بدون ما تضغط ارسال في الواتس، ارسل لـ +34 644 71 27 73 كلمة: I allow callmebot to send me messages وخذ الـ apikey")
-    CALLMEBOT_APIKEY = st.text_input("حط الـ apikey هنا اذا عندك (اذا ما عندك اتركه فاضي)", value="")
-    def send_auto(msg):
-        if not CALLMEBOT_APIKEY:
-            return False, "ما حطيت apikey - استخدم زر الواتس اليدوي اللي تحت"
-        try:
-            url = "https://api.callmebot.com/whatsapp.php"
-            res = requests.get(url, params={"phone": MY_WHATSAPP, "text": msg, "apikey": CALLMEBOT_APIKEY}, timeout=20)
-            return res.status_code == 200, "تم الارسال التلقائي ✅"
-        except Exception as e:
-            return False, f"خطأ: {e}"
-    st.caption("اذا تركته فاضي، بيشتغل زر الواتس العادي اللي يفتح لك الواتس جاهز")
 
 MIN_PREMIUM = 30000
 MIN_RATIO = 1.2
@@ -122,26 +100,24 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                 continue
     st.success(f"✅ لقيت {len(st.session_state.results)} سهم")
 
-# ===== عرض النتائج بكلا الطريقتين =====
+# ===== بكلا الطريقتين - تطلع مع بعض دائماً بدون اختيار =====
 if st.session_state.results:
-    # الطريقة 1: الكل في رسالة واحدة - يطلع فوق
-    if send_mode in ["الكل في رسالة واحدة", "بكلا الطريقتين - لوحدها + مجمعة"]:
-        st.markdown("### 📦 الطريقة 1: الكل في رسالة واحدة")
-        all_msg = "\n\n━━━━━━━━━━━━━━\n\n".join([m for _, m in st.session_state.results])
-        wa_all = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(all_msg)}"
-        st.info(f"الرسالة المجمعة فيها {len(st.session_state.results)} توصية في رسالة واتس واحدة")
-        st.link_button("📲 ارسل الكل في رسالة واحدة للواتس", wa_all, use_container_width=True)
+    st.divider()
+    # الطريقة 1: الكل مع بعض - فوق
+    st.markdown("### 📦 ارسل الكل مع بعض")
+    all_msg = "\n\n━━━━━━━━━━━━━━\n\n".join([m for _, m in st.session_state.results])
+    wa_all = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(all_msg)}"
+    st.link_button(f"📲 ارسل الكل ({len(st.session_state.results)} توصية) في رسالة واحدة", wa_all, use_container_width=True)
+    
+    st.divider()
+    # الطريقة 2: كل واحدة لوحدها - تحت
+    st.markdown("### 📄 ارسل كل توصية لوحدها")
+    for symbol, msg in st.session_state.results:
+        st.markdown(f"""
+        <div dir="rtl" style="background-color:white; padding:18px; border-radius:18px; box-shadow:0 2px 10px rgba(0,0,0,0.1); margin-bottom:10px; text-align:right; font-size:17px; line-height:1.8; color:black; white-space:pre-line;">
+        {msg}
+        </div>
+        """, unsafe_allow_html=True)
+        wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
+        st.link_button(f"📲 ارسل {symbol} لوحدها", wa_link, use_container_width=True)
         st.divider()
-
-    # الطريقة 2: كل توصية لوحدها
-    if send_mode in ["كل توصية لوحدها", "بكلا الطريقتين - لوحدها + مجمعة"]:
-        st.markdown("### 📄 الطريقة 2: كل توصية لوحدها")
-        for symbol, msg in st.session_state.results:
-            st.markdown(f"""
-            <div dir="rtl" style="background-color:white; padding:18px; border-radius:18px; box-shadow:0 2px 10px rgba(0,0,0,0.1); margin-bottom:10px; text-align:right; font-size:17px; line-height:1.8; color:black; white-space:pre-line;">
-            {msg}
-            </div>
-            """, unsafe_allow_html=True)
-            wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
-            st.link_button(f"📲 ارسل {symbol} لوحدها للواتس", wa_link, use_container_width=True)
-            st.divider()
