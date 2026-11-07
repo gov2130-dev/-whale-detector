@@ -6,7 +6,7 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ 50 سهم قيادي - تذبذب عالي - سبريد ضيق - عقود 2 إلى 3")
+st.caption("✅ 50 سهم قيادي - تذبذب عالي - سبريد ضيق - عقود 2 إلى 3 - أفضل 10")
 
 # ===== الشروط =====
 MIN_PREMIUM = 100000
@@ -16,8 +16,8 @@ MAX_PRICE = 3.0
 MIN_RATIO = 1.2
 MAX_DAYS = 14
 MAX_DISTANCE = 0.15
-MAX_SPREAD = 0.15  # جديد: السبريد أقل من 15%
-TOP_N = 5
+MAX_SPREAD = 0.15
+TOP_N = 10  # طلبك: 10
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -53,7 +53,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
     st.session_state.results = []
     st.session_state.seen = set()
     all_candidates = []
-    # ===== 50 سهم قيادي - تذبذب عالي - سبريد ضيق =====
     tickers = [
         "BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ",
         "COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR",
@@ -97,7 +96,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                                 continue
                             if price < MIN_PRICE or price > MAX_PRICE:
                                 continue
-                            # ===== فلتر السبريد الجديد =====
                             if bid > 0 and ask > 0 and price > 0:
                                 spread = (ask - bid) / price
                                 if spread > MAX_SPREAD:
@@ -127,7 +125,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                 continue
         all_candidates.sort(key=lambda x: x[0], reverse=True)
         st.session_state.results = [(s, m) for _, s, m in all_candidates[:TOP_N]]
-    st.success(f"✅ فحصت 50 سهم - لقيت {len(st.session_state.results)} سهم - أفضل 5")
+    st.success(f"✅ فحصت 50 سهم - لقيت {len(st.session_state.results)} سهم - أفضل 10")
 
 if st.session_state.results:
     st.divider()
