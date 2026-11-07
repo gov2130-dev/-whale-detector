@@ -3,13 +3,30 @@ import yfinance as yf
 from datetime import datetime
 import pandas as pd
 import urllib.parse
+import re
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
 
-# ===== رقمك - اكتبه هنا مرة واحدة في التطبيق نفسه، مو في الكود =====
-st.write("اكتب رقم واتسابك هنا:")
-MY_WHATSAPP = st.text_input("رقم الواتس", value="966500000000", help="مثال: 966500000000 - يبدأ بـ 966 بدون + وبدون 0")
+# ===== اصلاح الرقم - هذا هو اللي كان يخرب الارسال =====
+def clean_phone(raw):
+    # نشيل كل شي مو رقم
+    p = re.sub(r'\D', '', str(raw))  # نشيل + ومسافات و -
+    # اذا بدأ بـ 00 نشيلها
+    if p.startswith("00"):
+        p = p[2:]
+    # اذا بدأ بـ 0 مثل 0555371577 نحوله لـ 966555371577
+    if p.startswith("0"):
+        p = "966" + p[1:]
+    # اذا بدأ بـ 5 مثل 555371577 نحوله لـ 966555371577
+    if p.startswith("5") and len(p) == 9:
+        p = "966" + p
+    return p
+
+st.write("اكتب رقم واتسابك بأي صيغة، والكود بيصلحه لحاله:")
+raw_phone = st.text_input("رقم الواتس", value="0555371577", help="اكتبه زي ما تبي: 0555371577 أو 966555371577 أو +966555371577 - كلها بتشتغل")
+MY_WHATSAPP = clean_phone(raw_phone)
+st.caption(f"✅ الرقم بعد التنظيف: {MY_WHATSAPP} - هذا هو اللي بيرسل له الواتس")
 
 MIN_PREMIUM = 30000
 MIN_RATIO = 1.2
@@ -86,7 +103,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف، بدون تكرار")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف")
 
 for symbol, msg in st.session_state.results:
     st.markdown(f"""
@@ -94,13 +111,10 @@ for symbol, msg in st.session_state.results:
     {msg}
     </div>
     """, unsafe_allow_html=True)
-    
-    # هذا هو زر الواتس الجديد - بدون apikey وبدون UltraMsg وبدون CallMeBot
     wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
     st.link_button(f"📲 ارسل {symbol} للواتس", wa_link, use_container_width=True)
     st.divider()
 
-# زر ارسال الكل مرة واحدة
 if st.session_state.results:
     all_msg = "\n\n------------------------\n\n".join([m for _, m in st.session_state.results])
     wa_all = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(all_msg)}"
