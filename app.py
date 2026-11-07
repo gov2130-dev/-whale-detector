@@ -3,14 +3,14 @@ import yfinance as yf
 from datetime import datetime
 import pandas as pd
 import requests
+import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
 
-# ===== 1. اعدادات الواتس - لازم تغيرها، اذا خليتها مثل ما هي ما بيرسل =====
-ULTRAMSG_INSTANCE = "instance12345"  # غيرها: انسخها من موقع ultramsg.com
-ULTRAMSG_TOKEN = "abc123"  # غيرها: انسخها من موقع ultramsg.com
-MY_WHATSAPP = "966500000000"  # غيرها: رقمك يبدأ بـ 966 بدون + وبدون 0
+# ===== اعدادات الواتس الجديدة - CallMeBot =====
+MY_WHATSAPP = "966500000000"  # رقمك: 966 + رقمك بدون 0 وبدون +
+CALLMEBOT_APIKEY = "ضع_الـ apikey اللي رسله لك CallMeBot هنا"  # مثلا: 1234567
 
 MIN_PREMIUM = 30000
 MIN_RATIO = 1.2
@@ -19,32 +19,20 @@ def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
             round(entry*1.75,2), round(entry*1.85,2), round(entry*1.90,2), round(entry*2.00,2)]
 
-# ===== اصلاح الواتس - الحين يطلع لك وش الخطأ بالضبط =====
-def send_whatsapp(message):
-    if "instance12345" in ULTRAMSG_INSTANCE or "abc123" in ULTRAMSG_TOKEN:
-        return False, "⚠️ ما غيرت بيانات UltraMsg! لسى حاط البيانات الوهمية. روح ultramsg.com وانسخ Instance و Token الحقيقي."
+def send_whatsapp_callmebot(message):
+    if "ضع_الـ" in CALLMEBOT_APIKEY:
+        return False, "⚠️ لسى ما حطيت الـ apikey! ارسل رسالة لـ +34 644 71 27 73 واكتب: I allow callmebot to send me messages وبيجيك الـ apikey"
     try:
-        url = f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE}/messages/chat"
-        data = {"token": ULTRAMSG_TOKEN, "to": MY_WHATSAPP, "body": message}
-        res = requests.post(url, data=data, timeout=20)
-        # نعرض الرد كامل عشان نعرف وش المشكلة
+        url = "https://api.callmebot.com/whatsapp.php"
+        params = {"phone": MY_WHATSAPP, "text": message, "apikey": CALLMEBOT_APIKEY}
+        res = requests.get(url, params=params, timeout=20)
         if res.status_code == 200:
-            return True, "تم الارسال ✅"
+            return True, "تم الارسال ✅ افتح واتسابك"
         else:
-            return False, f"خطأ من UltraMsg: {res.text[:500]}"
+            return False, f"خطأ: {res.text[:300]}"
     except Exception as e:
-        return False, f"خطأ اتصال: {e}"
+        return False, f"خطأ: {e}"
 
-# زر تجربة الواتس - اضغطه قبل الفحص
-if st.button("📲 جرب الواتس الحين - ارسل رسالة تجريبية"):
-    ok, msg = send_whatsapp("تجربة - راصد الحيتان شغال ✅")
-    if ok:
-        st.success("الواتس شغال! وصلكت الرسالة؟")
-    else:
-        st.error(msg)
-        st.info("الحل: تأكد انك سويت Scan للباركود في UltraMsg، وان رقمك مربوط، وان Instance شغال.")
-
-# ===== صيغة الرسالة - بدون كلمة الأمريكي نهائياً =====
 def format_message(symbol, company, opt_type, strike, exp, entry, stop, vol):
     targets = get_targets(entry)
     type_txt = "🔴 شراء مرجح PUT" if opt_type == "PUT" else "🟢 شراء مرجح CALL"
@@ -66,7 +54,14 @@ def format_message(symbol, company, opt_type, strike, exp, entry, stop, vol):
 📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
     return msg
 
-# ===== حفظ النتائج عشان ما تتكرر مع كل ضغطة زر =====
+# زر تجربة الواتس
+if st.button("📲 جرب الواتس الحين"):
+    ok, txt = send_whatsapp_callmebot("تجربة - راصد الحيتان شغال ✅")
+    if ok:
+        st.success(txt)
+    else:
+        st.error(txt)
+
 if "results" not in st.session_state:
     st.session_state.results = []
 if "seen" not in st.session_state:
@@ -99,7 +94,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             if vol < 200 or oi == 0 or price < 0.5:
                                 continue
                             premium = vol * price * 100
-                            # منع التكرار: مفتاح واحد لكل سهم + سترايك + نوع
                             key = f"{symbol}-{opt_type}-{row['strike']}-{exp}"
                             if key in st.session_state.seen:
                                 continue
@@ -115,22 +109,24 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    if not st.session_state.results:
-        st.warning("ما فيه صفقات اليوم.")
-    else:
-        st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف، بدون تكرار")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف")
 
-# عرض النتائج المحفوظة - ما تتكرر حتى لو ضغطت زر الواتس
 for symbol, msg in st.session_state.results:
     st.markdown(f"""
     <div dir="rtl" style="background-color:white; padding:18px; border-radius:18px; box-shadow:0 2px 10px rgba(0,0,0,0.1); margin-bottom:10px; text-align:right; font-size:17px; line-height:1.8; color:black; white-space:pre-line;">
     {msg}
     </div>
     """, unsafe_allow_html=True)
-    if st.button(f"📲 ارسل {symbol} للواتس", key=f"wa_{symbol}_{len(msg)}"):
-        ok, txt = send_whatsapp(msg)
+    
+    # زر 1: ارسال تلقائي
+    if st.button(f"📲 ارسل {symbol} للواتس تلقائي", key=f"auto_{symbol}"):
+        ok, txt = send_whatsapp_callmebot(msg)
         if ok:
-            st.success(f"✅ تم ارسال {symbol}")
+            st.success(txt)
         else:
             st.error(txt)
+    
+    # زر 2: يفتح الواتس جاهز - هذا يشتغل 100% حتى لو الاول ما اشتغل
+    wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
+    st.markdown(f"[📲 افتح الواتس وارسل {symbol} بنفسك]({wa_link})")
     st.divider()
