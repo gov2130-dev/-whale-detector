@@ -6,15 +6,16 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ شروط مطابقة للبوت المرجعي + بدون عقود ثقيلة")
+st.caption("✅ نفس شروط البوت المرجعي - عقود 3 وأقل فقط")
 
-MIN_PREMIUM = 100000
-MIN_VOL = 300
-MIN_PRICE = 2.0
-MAX_PRICE = 20.0      # جديد: يحذف TSLA 135 و META 156 و AVGO 127
-MAX_DISTANCE = 0.15   # جديد: يحذف السترايك البعيد
-MIN_RATIO = 1.2
-MAX_DAYS = 14
+# ===== شروط البوت المرجعي + طلبك =====
+MIN_PREMIUM = 100000  # أقل Premium عنده 104,709
+MIN_VOL = 300         # أقل كمية عنده 309
+MIN_PRICE = 2.0       # أقل سعر عقد عنده 2.09
+MAX_PRICE = 3.0       # طلبك: 3 وأقل
+MIN_RATIO = 1.2       # Volume / OI
+MAX_DAYS = 14         # انتهاء إلى 14 يوم
+MAX_DISTANCE = 0.15   # السترايك قريب من السعر 15%
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -79,9 +80,9 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
                             price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
                             strike = row['strike']
-                            # ===== الفلاتر النهائية =====
                             if vol < MIN_VOL or oi == 0:
                                 continue
+                            # ===== هنا طلبك: 3 وأقل =====
                             if price < MIN_PRICE or price > MAX_PRICE:
                                 continue
                             premium = vol * price * 100
@@ -106,7 +107,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - عقود 3 وأقل")
 
 if st.session_state.results:
     st.divider()
