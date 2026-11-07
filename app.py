@@ -6,14 +6,15 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ شروط مطابقة للبوت المرجعي - Premium 100K")
+st.caption("✅ شروط مطابقة للبوت المرجعي + بدون عقود ثقيلة")
 
-# ===== شروط مستنتجة من صوره =====
-MIN_PREMIUM = 100000  # أقل Premium قبله 104,709
-MIN_VOL = 300         # أقل كمية قبلها 309
-MIN_PRICE = 2.0       # أقل سعر عقد قبله 2.09
-MIN_RATIO = 1.2       # Volume / OI
-MAX_DAYS = 14         # AVGO كان انتهاءه بعد 14 يوم
+MIN_PREMIUM = 100000
+MIN_VOL = 300
+MIN_PRICE = 2.0
+MAX_PRICE = 20.0      # جديد: يحذف TSLA 135 و META 156 و AVGO 127
+MAX_DISTANCE = 0.15   # جديد: يحذف السترايك البعيد
+MIN_RATIO = 1.2
+MAX_DAYS = 14
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -48,7 +49,6 @@ if "seen" not in st.session_state:
 if st.button("🔍 افحص الآن", use_container_width=True):
     st.session_state.results = []
     st.session_state.seen = set()
-    # قائمة موسعة - أضفت MU و NOW اللي هو يشتغل عليها
     tickers = ["BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ","COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR","LLY","UNH","XOM","CVX"]
     with st.spinner("جاري الفحص..."):
         for symbol in tickers:
@@ -68,7 +68,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     continue
                 best = None
                 best_score = 0
-                # أول 4 تواريخ، إلى 14 يوم
                 for exp in ticker.options[:4]:
                     days = (datetime.strptime(exp, "%Y-%m-%d") - datetime.now()).days
                     if days < 0 or days > MAX_DAYS:
@@ -80,13 +79,17 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
                             price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
                             strike = row['strike']
-                            # ===== الشروط الجديدة المطابقة له =====
-                            if vol < MIN_VOL or oi == 0 or price < MIN_PRICE:
+                            # ===== الفلاتر النهائية =====
+                            if vol < MIN_VOL or oi == 0:
+                                continue
+                            if price < MIN_PRICE or price > MAX_PRICE:
                                 continue
                             premium = vol * price * 100
                             if premium < MIN_PREMIUM:
                                 continue
                             distance = abs(strike - stock_price) / stock_price
+                            if distance > MAX_DISTANCE:
+                                continue
                             score = premium * (1 - distance * 0.5)
                             key = f"{symbol}-{opt_type}-{strike}-{exp}"
                             if key in st.session_state.seen:
@@ -103,7 +106,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - شروط 100K")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم")
 
 if st.session_state.results:
     st.divider()
