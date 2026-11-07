@@ -2,15 +2,14 @@ import streamlit as st
 import yfinance as yf
 from datetime import datetime
 import pandas as pd
-import requests
 import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
 
-# ===== اعدادات الواتس الجديدة - CallMeBot =====
-MY_WHATSAPP = "966500000000"  # رقمك: 966 + رقمك بدون 0 وبدون +
-CALLMEBOT_APIKEY = "ضع_الـ apikey اللي رسله لك CallMeBot هنا"  # مثلا: 1234567
+# ===== رقمك - اكتبه هنا مرة واحدة في التطبيق نفسه، مو في الكود =====
+st.write("اكتب رقم واتسابك هنا:")
+MY_WHATSAPP = st.text_input("رقم الواتس", value="966500000000", help="مثال: 966500000000 - يبدأ بـ 966 بدون + وبدون 0")
 
 MIN_PREMIUM = 30000
 MIN_RATIO = 1.2
@@ -18,20 +17,6 @@ MIN_RATIO = 1.2
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
             round(entry*1.75,2), round(entry*1.85,2), round(entry*1.90,2), round(entry*2.00,2)]
-
-def send_whatsapp_callmebot(message):
-    if "ضع_الـ" in CALLMEBOT_APIKEY:
-        return False, "⚠️ لسى ما حطيت الـ apikey! ارسل رسالة لـ +34 644 71 27 73 واكتب: I allow callmebot to send me messages وبيجيك الـ apikey"
-    try:
-        url = "https://api.callmebot.com/whatsapp.php"
-        params = {"phone": MY_WHATSAPP, "text": message, "apikey": CALLMEBOT_APIKEY}
-        res = requests.get(url, params=params, timeout=20)
-        if res.status_code == 200:
-            return True, "تم الارسال ✅ افتح واتسابك"
-        else:
-            return False, f"خطأ: {res.text[:300]}"
-    except Exception as e:
-        return False, f"خطأ: {e}"
 
 def format_message(symbol, company, opt_type, strike, exp, entry, stop, vol):
     targets = get_targets(entry)
@@ -53,14 +38,6 @@ def format_message(symbol, company, opt_type, strike, exp, entry, stop, vol):
 وقت التنفيذ: {time_now} SA 🕐
 📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
     return msg
-
-# زر تجربة الواتس
-if st.button("📲 جرب الواتس الحين"):
-    ok, txt = send_whatsapp_callmebot("تجربة - راصد الحيتان شغال ✅")
-    if ok:
-        st.success(txt)
-    else:
-        st.error(txt)
 
 if "results" not in st.session_state:
     st.session_state.results = []
@@ -109,7 +86,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم مختلف، بدون تكرار")
 
 for symbol, msg in st.session_state.results:
     st.markdown(f"""
@@ -118,15 +95,13 @@ for symbol, msg in st.session_state.results:
     </div>
     """, unsafe_allow_html=True)
     
-    # زر 1: ارسال تلقائي
-    if st.button(f"📲 ارسل {symbol} للواتس تلقائي", key=f"auto_{symbol}"):
-        ok, txt = send_whatsapp_callmebot(msg)
-        if ok:
-            st.success(txt)
-        else:
-            st.error(txt)
-    
-    # زر 2: يفتح الواتس جاهز - هذا يشتغل 100% حتى لو الاول ما اشتغل
+    # هذا هو زر الواتس الجديد - بدون apikey وبدون UltraMsg وبدون CallMeBot
     wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
-    st.markdown(f"[📲 افتح الواتس وارسل {symbol} بنفسك]({wa_link})")
+    st.link_button(f"📲 ارسل {symbol} للواتس", wa_link, use_container_width=True)
     st.divider()
+
+# زر ارسال الكل مرة واحدة
+if st.session_state.results:
+    all_msg = "\n\n------------------------\n\n".join([m for _, m in st.session_state.results])
+    wa_all = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(all_msg)}"
+    st.link_button("📲 ارسل كل التوصيات للواتس دفعة واحدة", wa_all, use_container_width=True)
