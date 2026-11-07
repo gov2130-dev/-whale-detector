@@ -1,262 +1,177 @@
-# V17 - المعتمد - النهائي
-# بناء على تقييم 52 توصية من 4-5 نوفمبر
-# الكود القديم كان يعطي 52 توصية، 48 منها ريتيل. V17 يعطي 2-3 فقط، بس حوت حقيقي
+# ==========================================
+# بوت رصد صفقات الحيتان - النسخة الكاملة
+# يفحص كل اسهم S&P 500 ويرسل على تلجرام
+# ==========================================
 
-import streamlit as st
 import yfinance as yf
+import requests
+import time
 import pandas as pd
-import urllib.parse
-from datetime import datetime, date, time
-import pytz
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
-st.set_page_config(page_title="حيتان صانع السوق", layout="wide")
-st.title("🐋 حيتان صانع السوق - V17 - المعتمد")
-st.caption("V17: 68 سهم + فلتر اتجاه MA20 + ممنوع 0d/1d + ممنوع Bid=0 + ممنوع سترايك بعيد")
+# ===== 1. اعدادات تلجرام - غيرها ببياناتك =====
+BOT_TOKEN = "ضع_توكن_البوت_هنا"  # مثلا: 123456:ABC-DEF1234ghIkl...
+CHAT_ID = "ضع_ايدي_القناة_هنا"    # مثلا: -1001234567890 او @اسم_قناتك
 
-GROUPS = {
-    "🔵 الكبار - Mega": ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","BRK-B","JPM","V","MA"],
-    "🟣 أشباه الموصلات - Semis": ["AMD","SMCI","ARM","MU","QCOM","INTC","ASML","AMAT","LRCX","KLAC"],
-    "🟢 التكنولوجيا والنمو": ["PLTR","COIN","HOOD","NFLX","SHOP","SQ","CRWD","NET","DDOG","SNOW","AI","RBLX","UBER","LYFT"],
-    "🟡 الطاقة والذهب": ["CVX","XOM","FSLR","ENPH","GDX","GLD","SLV","NEM","OXY","COP","DVN"],
-    "🔴 الصحة والصناعة": ["LLY","UNH","BA","CAT","DE","GE","LMT","RTX","HON","PFE","ABT","LOW","HD","KO","JNJ","WMT"],
-    "🟠 الصين والميم": ["BABA","BIDU","PDD","JD","NIO","XPEV","GME","AMC","BB","AFRM","CHWY","BYND","U","SOUN","MARA","BAC","PYPL","NFLX","XOM","GLD","SLV","META"],
-}
+# اذا ما تبي يرسل تلجرام، خليها False وبيطبع لك في الشاشة بس
+SEND_TO_TELEGRAM = True
 
-ALL_TICKERS = list(dict.fromkeys([t for lst in GROUPS.values() for t in lst]))
+# ===== 2. شروط البوت - نفس شروط بوت القناة =====
+MIN_PREMIUM = 50000       # اقل قيمة صفقة: 50 الف دولار
+MIN_VOL_OI_RATIO = 1.5    # الفوليوم لازم يكون 1.5 ضعف الـ OI
+MIN_VOLUME = 300          # اقل حجم تداول
+MIN_PRICE = 0.5           # اقل سعر عقد
+MAX_DAYS_TO_EXPIRY = 7    # بس العقود اللي تنتهي خلال 7 ايام
+MAX_SIGNALS_PER_RUN = 10  # كم توصية يرسل في كل مرة
+CHECK_EVERY_MINUTES = 60  # يفحص كل ساعة
 
-# هل السوق فاتح ولا بري ماركت؟
-sa_tz = pytz.timezone("Asia/Riyadh")
-now_sa = datetime.now(sa_tz)
-weekday = now_sa.weekday()
-t_now = now_sa.time()
-is_open = (weekday < 5) and (time(17,30) <= t_now <= time(23,59))
-MODE = "LIVE" if is_open else "OI"
-
-if is_open:
-    st.success(f"✅ السوق فاتح - {now_sa.strftime('%H:%M')} - نفحص Vol اليوم")
-else:
-    st.error(f"⛔ السوق مسكر / بري ماركت - {now_sa.strftime('%H:%M')} - نفحص OI أمس")
-
-def get_flows(ticker):
-    cands = []
+# ===== 3. جلب كل اسهم S&P 500 =====
+def get_sp500_tickers():
     try:
-        tk = yf.Ticker(ticker)
-        exps = tk.options
-        if not exps:
-            return cands
+        # يجيب القائمة الحية من ويكيبيديا
+        table = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        tickers = table['Symbol'].tolist()
+        # اصلاح رموز مثل BRK.B -> BRK-B عشان ياهو يفهمها
+        tickers = [t.replace('.', '-') for t in tickers]
+        print(f"تم جلب {len(tickers)} سهم من S&P 500")
+        return tickers
+    except Exception as e:
+        print(f"ما قدرت اجيب قائمة S&P 500، بستخدم قائمة احتياطية: {e}")
+        # قائمة احتياطية لاهم 100 سهم
+        return [
+            "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","BRK-B","AVGO","JPM",
+            "LLY","V","MA","XOM","UNH","COST","HD","PG","JNJ","WMT","NFLX","CRM",
+            "ORCL","BAC","CVX","ABBV","KO","TMO","CSCO","ACN","PEP","ADBE","MCD",
+            "WFC","ABT","LIN","TXN","DHR","QCOM","AMGN","NKE","HON","IBM","GE",
+            "CAT","UNP","VZ","PM","INTU","LOW","GS","MS","BLK","AMD","RTX","SPG",
+            "NOW","ISRG","AMAT","BKNG","SYK","LRCX","ADI","MDT","GILD","ADP","MDLZ",
+            "CHTR","REGN","VRTX","CSX","ATVI","MAR","PANW","KLAC","SNPS","CDNS",
+            "BABA","TSLA","PLTR","COIN","GDX","SMCI","MU","MRVL","APP","HOOD"
+        ]
 
-        # --- جلب السعر و MA20 لفلتر الاتجاه ---
-        hist = yf.download(ticker, period="1mo", interval="1d", progress=False, auto_adjust=False)
-        if hist is None or hist.empty:
-            return cands
-        if isinstance(hist.columns, pd.MultiIndex):
-            hist.columns = [c[0] if isinstance(c, tuple) else c for c in hist.columns]
-        stock_price = float(hist["Close"].iloc[-1])
-        ma20 = float(hist["Close"].tail(20).mean())
-        trend = "UP" if stock_price > ma20 else "DOWN"
-        trend_strength = (stock_price - ma20) / ma20 * 100
+# ===== 4. حساب الاهداف بنفس طريقة البوت =====
+def get_targets(entry):
+    return [
+        round(entry * 1.25, 2),
+        round(entry * 1.35, 2),
+        round(entry * 1.50, 2),
+        round(entry * 1.65, 2),
+        round(entry * 1.75, 2),
+        round(entry * 1.85, 2),
+        round(entry * 1.90, 2),
+        round(entry * 2.00, 2),
+    ]
 
-        for exp in exps[:10]:
-            try:
-                exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
-                days = (exp_date - date.today()).days
-                # فلتر 1: ممنوع 0d و 1d - هذا اللي قتل 22 توصية في 5 نوفمبر
-                if days < 2 or days > 8:
-                    continue
-                chain = tk.option_chain(exp)
-                for direction, df_opt in [("CALL", chain.calls), ("PUT", chain.puts)]:
-                    # --- فلتر الاتجاه ---
-                    # إذا السهم صاعد فوق MA20 بـ +1%، نلغي كل PUT
-                    # هذا كان بيلغي NVDA PUT اللي خسرك
-                    if direction == "PUT" and trend == "UP" and trend_strength > 1.0:
-                        continue
-                    # إذا السهم نازل تحت MA20 بـ -1%، نلغي كل CALL
-                    if direction == "CALL" and trend == "DOWN" and trend_strength < -1.0:
-                        continue
-                    if df_opt is None or df_opt.empty:
-                        continue
-                    for _, row in df_opt.iterrows():
-                        try:
-                            vol = float(row["volume"]) if pd.notna(row["volume"]) else 0
-                            oi = float(row["openInterest"]) if pd.notna(row["openInterest"]) else 0
-                            bid = float(row["bid"]) if pd.notna(row["bid"]) else 0
-                            ask = float(row["ask"]) if pd.notna(row["ask"]) else 0
-                            last = float(row["lastPrice"]) if pd.notna(row["lastPrice"]) else 0
-                            strike = float(row["strike"])
-                            if last <= 0:
-                                continue
-                            # فلتر 2: ممنوع Bid = 0 - هذا كان في كل توصيات 5 نوفمبر الظهر
-                            # Bid صفر معناها ما فيه أحد يبي يشتري منك
-                            if bid <= 0:
-                                continue
-                            # فلتر 3: Bid لازم يكون قريب من Entry - إذا الفرق كبير، السبريد كبير
-                            # مثال PANW: Bid 4.65 و Entry 7.25 - سبريد 36% - صانع السوق يبيع لك
-                            if abs(last - bid) / (last + 0.01) > 0.30:
-                                continue
-                            dist = abs(strike - stock_price) / stock_price * 100
-                            # فلتر 4: ممنوع سترايك بعيد أكثر من 2% - MU 830 و META 645 كانوا بعيدين
-                            if dist > 2.0:
-                                continue
-                            # حساب Premium
-                            if MODE == "LIVE":
-                                if vol < 300:
-                                    continue
-                                premium = vol * last * 100
-                                label = f"Vol {int(vol)}"
-                                vol_ok = vol >= 800
-                                ratio = vol / (oi + 1)
-                                ratio_ok = ratio >= 1.2
-                            else:
-                                if oi < 2000:
-                                    continue
-                                premium = oi * last * 100
-                                label = f"OI {int(oi)}"
-                                vol_ok = oi >= 4000
-                                ratio_ok = True
-                                ratio = 0
-                            # السبريد
-                            if bid > 0 and ask > 0:
-                                mid = (bid + ask) / 2
-                                spread = (ask - bid) / (mid + 0.01) * 100
-                            else:
-                                spread = 999
-                            # فلتر السبريد: ممنوع أكثر من 15% في اللايف
-                            if MODE == "LIVE" and spread > 15:
-                                continue
-                            premium_ok = premium >= 100000  # خفضناه من 2M إلى 100k عشان GLD و PFE يطلعون - كانوا 344k و 181k
-                            dist_ok = dist <= 2.0
-                            spread_ok = spread <= 15 if MODE == "LIVE" else True
+# ===== 5. ارسال رسالة تلجرام =====
+def send_telegram(message):
+    if not SEND_TO_TELEGRAM:
+        print(message)
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": message}
+        requests.post(url, data=data, timeout=10)
+    except Exception as e:
+        print(f"خطأ في ارسال تلجرام: {e}")
 
-                            checks = []
-                            checks.append(f"{label} {'✅' if vol_ok else '❌'}")
-                            if MODE == "LIVE":
-                                checks.append(f"Ratio {ratio:.1f} {'✅' if ratio_ok else '❌'}")
-                            checks.append(f"Premium ${premium:,.0f} {'✅' if premium_ok else '❌'}")
-                            checks.append(f"ATM {dist:.1f}% ✅")
-                            checks.append(f"Bid ${bid:.2f} ✅")
-                            checks.append(f"اتجاه {trend} {trend_strength:+.1f}% ✅")
-                            if MODE == "LIVE":
-                                checks.append(f"سبريد {spread:.1f}% {'✅' if spread_ok else '❌'}")
+# ===== 6. فحص سهم واحد =====
+def scan_ticker(symbol):
+    results = []
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        stock_price = info.get('currentPrice') or info.get('regularMarketPrice')
+        company = info.get('shortName', symbol)
+        if not stock_price:
+            return []
 
-                            if MODE == "LIVE":
-                                score = sum([vol_ok, ratio_ok, premium_ok, dist_ok, spread_ok])
-                                max_score = 5
-                            else:
-                                score = sum([vol_ok, premium_ok, dist_ok])
-                                max_score = 3
-
-                            group_name = ""
-                            for gn, gl in GROUPS.items():
-                                if ticker in gl:
-                                    group_name = gn
-                                    break
-                            cands.append({
-                                "ticker": ticker, "group": group_name, "direction": direction,
-                                "strike": strike, "exp": exp, "days": days,
-                                "stock": round(stock_price, 2), "ma20": round(ma20, 2),
-                                "trend": trend, "trend_strength": round(trend_strength, 2),
-                                "entry": round(last, 2), "bid": round(bid, 2), "ask": round(ask, 2),
-                                "vol": int(vol), "oi": int(oi), "ratio": round(ratio, 2),
-                                "premium": int(premium), "spread": round(spread, 1),
-                                "dist": round(dist, 2), "score": score, "max_score": max_score,
-                                "checks": " | ".join(checks), "mode": MODE
-                            })
-                        except Exception:
-                            continue
-            except Exception:
+        expirations = ticker.options[:3]  # اقرب 3 تواريخ فقط للسرعة
+        for exp in expirations:
+            exp_date = datetime.strptime(exp, "%Y-%m-%d")
+            days_left = (exp_date - datetime.now()).days
+            if days_left < 0 or days_left > MAX_DAYS_TO_EXPIRY:
                 continue
-        return cands
-    except Exception:
-        return cands
 
-st.subheader("📲 ارسال للواتساب")
-phone = st.text_input("رقم الواتساب (اختياري)", placeholder="9665XXXXXXXX")
-selected_groups = st.multiselect("اختر المجموعات:", list(GROUPS.keys()), default=list(GROUPS.keys()))
-tickers_to_scan = list(dict.fromkeys([t for g in selected_groups for t in GROUPS[g]]))
-st.write(f"بنكمل فحص: **{len(tickers_to_scan)} سهم** | الوضع: **{'لايف' if MODE=='LIVE' else 'بري ماركت - OI أمس'}**")
-st.info("💡 V17: إذا طلع لك 2-3 توصيات بس، هذا هو الصح. الكود القديم كان يعطيك 15 توصية، 12 منها ريتيل.")
-
-if st.button(f"🔍 افحص {len(tickers_to_scan)} سهم - V17 المعتمد", use_container_width=True):
-    all_cands = []
-    bar = st.progress(0)
-    txt = st.empty()
-    done = 0
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(get_flows, t): t for t in tickers_to_scan}
-        for fut in as_completed(futures):
-            done += 1
-            txt.text(f"فحصنا: {done}/{len(tickers_to_scan)}")
-            bar.progress(done / len(tickers_to_scan))
             try:
-                all_cands.extend(fut.result())
-            except Exception:
-                pass
-    bar.empty()
-    txt.empty()
-    # إزالة التكرار: سهم واحد = توصية واحدة - نأخذ الأقوى Premium
-    # هذا يحل مشكلة NVDA 180 PUT و NVDA 185 PUT مع بعض
-    seen = {}
-    for c in sorted(all_cands, key=lambda x: x["premium"], reverse=True):
-        key = c["ticker"]
-        if key not in seen:
-            seen[key] = c
-    all_cands = list(seen.values())
-    all_cands = sorted(all_cands, key=lambda x: (x["score"], x["premium"]), reverse=True)
+                chain = ticker.option_chain(exp)
+            except:
+                continue
 
-    if MODE == "LIVE":
-        strong = [c for c in all_cands if c["score"] == 5][:5]
-        near = [c for c in all_cands if c["score"] == 4][:8]
-    else:
-        strong = [c for c in all_cands if c["score"] == 3][:5]
-        near = [c for c in all_cands if c["score"] == 2][:8]
+            for opt_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
+                for _, row in df.iterrows():
+                    vol = row['volume'] if pd.notna(row['volume']) else 0
+                    oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
+                    price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
 
-    st.info(f"فحصنا {len(tickers_to_scan)} سهم | لقينا {len(all_cands)} تدفق بعد كل الفلاتر | {len(strong)} حوت كامل | {len(near)} قريب")
+                    if vol < MIN_VOLUME or oi == 0 or price < MIN_PRICE:
+                        continue
 
-    if len(strong) > 0:
-        st.success(f"🔥 حوت V17 المعتمد في {len(strong)} سهم - كلها مع اتجاه السوق")
-        for m in strong:
-            entry = m["entry"]
-            m["stop"] = round(entry * 0.5, 2)
-            m["t1"] = round(entry * 1.5, 2)
-            m["t2"] = round(entry * 2.3, 2)
-            m["t3"] = round(entry * 3.2, 2)
-        msg_lines = []
-        for m in strong:
-            emoji = "🟢" if m["direction"] == "CALL" else "🔴"
-            msg_lines.append(f"{emoji} {m['ticker']} {m['strike']} {m['direction']} 🐋")
-            msg_lines.append(f"Exp: {m['exp']} ({m['days']}d) Stock: ${m['stock']} Trend: {m['trend']} {m['trend_strength']:+.1f}% vs MA20 ${m['ma20']}")
-            msg_lines.append(f"Entry: ${m['entry']} Bid: ${m['bid']} OI: {m['oi']} Vol: {m['vol']} Flow: ${m['premium']:,}")
-            msg_lines.append(f"Stop: ${m['stop']}")
-            msg_lines.append(f"Target: ${m['t1']} (+50%) | ${m['t2']} (+130%) | ${m['t3']} (+220%)")
-            msg_lines.append("")
-        msg_text = "\n".join(msg_lines)
-        encoded = urllib.parse.quote(msg_text)
-        if phone.strip() != "":
-            st.link_button("📲 ارسل التوصيات واتساب", f"https://wa.me/{phone.strip()}?text={encoded}", use_container_width=True)
+                    ratio = vol / oi
+                    premium = vol * price * 100
+
+                    # شرط الحوت
+                    if ratio >= MIN_VOL_OI_RATIO and premium >= MIN_PREMIUM:
+                        entry = round(float(price), 2)
+                        stop = round(entry * 0.67, 2)
+                        targets = get_targets(entry)
+                        targets_str = " | ".join(map(str, targets))
+
+                        # نوع الصفقة بالعربي
+                        type_ar = "شراء CALL 🟢" if opt_type == "CALL" else "شراء PUT 🔴"
+
+                        msg = (
+                            f"🇺🇸 الأمريكي تحت المجهر\n"
+                            f"{symbol} - {company}\n"
+                            f"{type_ar}\n"
+                            f"الانتهاء: {exp} ({days_left} يوم)\n"
+                            f"السهم الآن: ${stock_price:.2f} | سترايك: {row['strike']}\n"
+                            f"سعر التنفيذ: {entry} دولار للعقد (216 دولار تقريبا)\n"
+                            f"الوقف: {stop} 🔴 | الكمية: {int(vol)} عقد\n"
+                            f"قيمة الصفقة: ${int(premium):,}\n\n"
+                            f"الأهداف بالترتيب 🎯\n"
+                            f"{targets_str}\n\n"
+                            f"إدارة الوقف ⚠️\n"
+                            f"بعد الهدف الأول، ارفع الوقف إلى سعر الدخول. وبعد كل هدف جديد، ارفعه إلى سعر الهدف السابق.\n\n"
+                            f"وقت التنفيذ: {datetime.now().strftime('%H:%M:%S')} SA\n"
+                            f"رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."
+                        )
+                        results.append((premium, msg))
+        return results
+    except Exception as e:
+        return []
+
+# ===== 7. التشغيل الرئيسي - يفحص كل ساعة =====
+def main_loop():
+    tickers = get_sp500_tickers()
+    print("البوت بدأ... بيفحص كل ساعة")
+    send_telegram("✅ البوت اشتغل - ببدأ فحص كل اسهم S&P 500 كل ساعة")
+
+    while True:
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] جاري فحص {len(tickers)} سهم...")
+        all_signals = []
+
+        for i, sym in enumerate(tickers):
+            if i % 50 == 0:
+                print(f"فحصت {i}/{len(tickers)}...")
+            signals = scan_ticker(sym)
+            all_signals.extend(signals)
+
+        # ترتيب من الاكبر قيمة للاصغر
+        all_signals.sort(key=lambda x: x[0], reverse=True)
+
+        if not all_signals:
+            print("ما فيه صفقات حيتان تطابق الشروط هالساعة.")
         else:
-            st.link_button("📲 ارسل التوصيات واتساب", f"https://wa.me/?text={encoded}", use_container_width=True)
-        st.code(msg_text, language="text")
-        st.divider()
-        for m in strong:
-            emoji = "🟢" if m["direction"] == "CALL" else "🔴"
-            st.markdown(f"""
-**{emoji} {m['ticker']} {m['strike']} {m['direction']} 🐋 | {m['group']}**  
-Exp: {m['exp']} ({m['days']}d) Stock: ${m['stock']} | MA20: ${m['ma20']} | اتجاه: {m['trend']} {m['trend_strength']:+.1f}%  
-Entry: ${m['entry']} | Bid: ${m['bid']} | OI: {m['oi']} | Vol: {m['vol']} | Flow: ${m['premium']:,}  
-Stop: ${m['stop']}  
-Target: ${m['t1']} (+50%) | ${m['t2']} (+130%) | ${m['t3']} (+220%)  
-**{m['checks']}**
-""")
-            st.divider()
-    else:
-        st.warning("مافيه حوت كامل بعد كل الفلاتر - هذا هو الصح. معناها كل الحيتان اليوم كانت ضد الاتجاه أو Bid=0 أو 0d، فحذفناها.")
+            print(f"✅ لقيت {len(all_signals)} صفقة، برسل اقوى {MAX_SIGNALS_PER_RUN}")
+            for _, msg in all_signals[:MAX_SIGNALS_PER_RUN]:
+                send_telegram(msg)
+                time.sleep(2)  # عشان تلجرام ما يحظرك
 
-    if len(near) > 0:
-        st.subheader("👀 أقرب حوت - مراقبة فقط، لا تدخل")
-        for m in near:
-            emoji = "🟢" if m["direction"] == "CALL" else "🔴"
-            st.warning(f"{emoji} {m['ticker']} {m['strike']} {m['direction']} | {m['group']} | Exp: {m['exp']} | Stock: ${m['stock']} | MA20: ${m['ma20']} | اتجاه: {m['trend']} {m['trend_strength']:+.1f}% | Entry: ${m['entry']} Bid: ${m['bid']} | Flow: ${m['premium']:,} | {m['checks']}")
+        print(f"انتظار {CHECK_EVERY_MINUTES} دقيقة للفحص القادم...")
+        time.sleep(CHECK_EVERY_MINUTES * 60)
 
-st.divider()
-st.caption("V17 المعتمد: 68 سهم - فلتر اتجاه MA20 - ممنوع 0d/1d - ممنوع Bid=0 - ممنوع سترايك >2% - سهم واحد = توصية واحدة - Premium > 100k")
+# ===== 8. تشغيل البوت =====
+if __name__ == "__main__":
+    # تثبيت المكتبات المطلوبة قبل اول تشغيل:
+    # pip install yfinance pandas requests
+    main_loop()
