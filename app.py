@@ -6,10 +6,14 @@ import urllib.parse
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-st.caption("✅ بدون رقم - انت تختار من الواتس لمن ترسل")
+st.caption("✅ شروط مطابقة للبوت المرجعي - Premium 100K")
 
-MIN_PREMIUM = 30000
-MIN_RATIO = 1.2
+# ===== شروط مستنتجة من صوره =====
+MIN_PREMIUM = 100000  # أقل Premium قبله 104,709
+MIN_VOL = 300         # أقل كمية قبلها 309
+MIN_PRICE = 2.0       # أقل سعر عقد قبله 2.09
+MIN_RATIO = 1.2       # Volume / OI
+MAX_DAYS = 14         # AVGO كان انتهاءه بعد 14 يوم
 
 def get_targets(entry):
     return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
@@ -44,7 +48,8 @@ if "seen" not in st.session_state:
 if st.button("🔍 افحص الآن", use_container_width=True):
     st.session_state.results = []
     st.session_state.seen = set()
-    tickers = ["BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ","COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM"]
+    # قائمة موسعة - أضفت MU و NOW اللي هو يشتغل عليها
+    tickers = ["BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ","COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR","LLY","UNH","XOM","CVX"]
     with st.spinner("جاري الفحص..."):
         for symbol in tickers:
             try:
@@ -63,9 +68,10 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     continue
                 best = None
                 best_score = 0
-                for exp in ticker.options[:3]:
+                # أول 4 تواريخ، إلى 14 يوم
+                for exp in ticker.options[:4]:
                     days = (datetime.strptime(exp, "%Y-%m-%d") - datetime.now()).days
-                    if days < 0 or days > 7:
+                    if days < 0 or days > MAX_DAYS:
                         continue
                     chain = ticker.option_chain(exp)
                     for opt_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
@@ -74,15 +80,18 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
                             price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
                             strike = row['strike']
-                            if vol < 200 or oi == 0 or price < 0.5:
+                            # ===== الشروط الجديدة المطابقة له =====
+                            if vol < MIN_VOL or oi == 0 or price < MIN_PRICE:
                                 continue
                             premium = vol * price * 100
+                            if premium < MIN_PREMIUM:
+                                continue
                             distance = abs(strike - stock_price) / stock_price
                             score = premium * (1 - distance * 0.5)
                             key = f"{symbol}-{opt_type}-{strike}-{exp}"
                             if key in st.session_state.seen:
                                 continue
-                            if vol/oi >= MIN_RATIO and premium >= MIN_PREMIUM and score > best_score:
+                            if vol/oi >= MIN_RATIO and score > best_score:
                                 best_score = score
                                 best = (opt_type, row, exp, price, vol, key)
                 if best:
@@ -94,16 +103,14 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                     st.session_state.results.append((symbol, msg))
             except:
                 continue
-    st.success(f"✅ لقيت {len(st.session_state.results)} سهم")
+    st.success(f"✅ لقيت {len(st.session_state.results)} سهم - شروط 100K")
 
-# ===== بكلا الطريقتين - بدون رقم، تختار من الواتس =====
 if st.session_state.results:
     st.divider()
     st.markdown("### 📦 ارسل الكل مع بعض")
     all_msg = "\n\n━━━━━━━━━━━━━━\n\n".join([m for _, m in st.session_state.results])
     wa_all = f"https://wa.me/?text={urllib.parse.quote(all_msg)}"
     st.link_button(f"📲 ارسل الكل ({len(st.session_state.results)} توصية) - اختر من الواتس", wa_all, use_container_width=True)
-
     st.divider()
     st.markdown("### 📄 ارسل كل توصية لوحدها")
     for symbol, msg in st.session_state.results:
