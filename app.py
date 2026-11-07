@@ -3,25 +3,10 @@ import yfinance as yf
 from datetime import datetime
 import pandas as pd
 import urllib.parse
-import re
 
 st.set_page_config(page_title="راصد الحيتان", layout="centered")
 st.title("📊 راصد الحيتان")
-
-# ===== الرقم - ينظف لحاله =====
-def clean_phone(raw):
-    p = re.sub(r'\D', '', str(raw))
-    if p.startswith("00"):
-        p = p[2:]
-    if p.startswith("0"):
-        p = "966" + p[1:]
-    if p.startswith("5") and len(p) == 9:
-        p = "966" + p
-    return p
-
-raw_phone = st.text_input("رقم الواتس", value="0555371577")
-MY_WHATSAPP = clean_phone(raw_phone)
-st.caption(f"✅ الرقم الصح: {MY_WHATSAPP}")
+st.caption("✅ بدون رقم - انت تختار من الواتس لمن ترسل")
 
 MIN_PREMIUM = 30000
 MIN_RATIO = 1.2
@@ -66,9 +51,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                 ticker = yf.Ticker(symbol)
                 info = ticker.info
                 company = info.get('shortName', symbol)
-
-                # ===== هنا الصح - stock_price داخل الحلقة بعد ما نعرف ticker =====
-                # نجيب سعر السهم الحي بطريقة آمنة، بدون ما يطيح التطبيق
                 stock_price = info.get('currentPrice') or info.get('regularMarketPrice')
                 if not stock_price:
                     try:
@@ -79,8 +61,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                         pass
                 if not stock_price:
                     continue
-                # =====================================================
-
                 best = None
                 best_score = 0
                 for exp in ticker.options[:3]:
@@ -97,7 +77,6 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                             if vol < 200 or oi == 0 or price < 0.5:
                                 continue
                             premium = vol * price * 100
-                            # نفضل القريب من السعر، بس ما نحذف البعيد مثل AMD 610
                             distance = abs(strike - stock_price) / stock_price
                             score = premium * (1 - distance * 0.5)
                             key = f"{symbol}-{opt_type}-{strike}-{exp}"
@@ -117,13 +96,13 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                 continue
     st.success(f"✅ لقيت {len(st.session_state.results)} سهم")
 
-# ===== بكلا الطريقتين - مع بعض دائماً =====
+# ===== بكلا الطريقتين - بدون رقم، تختار من الواتس =====
 if st.session_state.results:
     st.divider()
     st.markdown("### 📦 ارسل الكل مع بعض")
     all_msg = "\n\n━━━━━━━━━━━━━━\n\n".join([m for _, m in st.session_state.results])
-    wa_all = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(all_msg)}"
-    st.link_button(f"📲 ارسل الكل ({len(st.session_state.results)} توصية) في رسالة واحدة", wa_all, use_container_width=True)
+    wa_all = f"https://wa.me/?text={urllib.parse.quote(all_msg)}"
+    st.link_button(f"📲 ارسل الكل ({len(st.session_state.results)} توصية) - اختر من الواتس", wa_all, use_container_width=True)
 
     st.divider()
     st.markdown("### 📄 ارسل كل توصية لوحدها")
@@ -133,6 +112,6 @@ if st.session_state.results:
         {msg}
         </div>
         """, unsafe_allow_html=True)
-        wa_link = f"https://wa.me/{MY_WHATSAPP}?text={urllib.parse.quote(msg)}"
-        st.link_button(f"📲 ارسل {symbol} لوحدها", wa_link, use_container_width=True)
+        wa_link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+        st.link_button(f"📲 ارسل {symbol} - اختر من الواتس", wa_link, use_container_width=True)
         st.divider()
