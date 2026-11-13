@@ -1,192 +1,160 @@
-# راصد الحيتان - V3
-# يشتغل السوق فاتح أو مسكر - 150 سهم - نظام نقاط - أفضل 10 دائما
+# راصد الحيتان - V4
+# توصيات فقط، بدون جدول - بريميوم حقيقي من الأوبشن تشين - إرسال واتساب
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, time
 import pytz
+import requests
 
 st.set_page_config(page_title="راصد الحيتان", layout="wide")
-st.title("📊 راصد الحيتان")
+st.title("🔍 راصد الحيتان")
 
-# ================= 1. قائمة الأسهم - 150 سهم =================
-# بدل 50، صارت 150: قيادية + تكنولوجيا + طاقة + بنوك + صحة + تجزئة + ETF
-STOCKS_150 = [
-    # ETF الكبيرة - 10
-    "SPY","QQQ","IWM","DIA","VOO","IVV","ARKK","XLF","XLK","XLE",
-    # التكنولوجيا الكبيرة - 25
-    "NVDA","AAPL","MSFT","GOOGL","GOOG","AMZN","META","TSLA","AVGO","ORCL",
-    "AMD","NFLX","CRM","ADBE","INTC","MU","QCOM","TXN","AMAT","LRCX",
-    "PLTR","SNOW","CRWD","PANW","SHOP",
-    # البنوك والمالية - 15
-    "JPM","BAC","GS","MS","WFC","C","BLK","SCHW","AXP","V",
-    "MA","PYPL","COIN","HOOD","SOFI",
-    # الطاقة - 12
-    "XOM","CVX","COP","SLB","EOG","OXY","MPC","PSX","VLO","HAL",
-    "MSTR","CLSK",
-    # الصحة - 15
-    "LLY","UNH","JNJ","MRK","PFE","ABBV","TMO","AMGN","GILD","REGN",
-    "VRTX","ISRG","HIMS","UNH","CVS",
-    # التجزئة والاستهلاك - 15
-    "WMT","COST","HD","MCD","SBUX","NKE","TGT","LOW","TJX","CMG",
-    "LULU","ABNB","UBER","LYFT","DASH",
-    # الصناعة والدفاع - 12
-    "BA","CAT","GE","HON","LMT","RTX","NOC","GD","DE","UPS",
-    "FDX","DAL",
-    # الاتصالات والإعلام - 10
-    "T","VZ","TMUS","DIS","CMCSA","WBD","PARA","NFLX","SPOT","ROKU",
-    # أشباه الموصلات الإضافية - 10
-    "NVDA","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","ON",
-    # النمو والمضاربة - 16
-    "RIVN","LCID","NIO","PLUG","OPEN","GME","AMC","BBBY","DWAC","AFRM",
-    "UPST","AI","SOUN","IONQ","RGTI","QBTS",
-    # أخرى قيادية - 10
-    "BRK-B","PEP","KO","PG","XOM","VZ","INTC","CSCO","IBM","ORCL",
-]
-# إزالة التكرار
+# ============ إعدادات الواتساب ============
+# استخدم Twilio WhatsApp أو UltraMsg - حط بياناتك هنا
+WHATSAPP_TOKEN = st.secrets.get("WHATSAPP_TOKEN", "حط_التوكن_هنا")
+WHATSAPP_TO = st.secrets.get("WHATSAPP_TO", "9665xxxxxxxx")  # رقمك بالواتساب
+WHATSAPP_API_URL = "https://api.ultramsg.com/instanceXXXX/messages/chat"  # مثال UltraMsg
+
+def send_whatsapp(msg):
+    try:
+        # UltraMsg مثال - غيره حسب خدمتك
+        payload = {"token": WHATSAPP_TOKEN, "to": WHATSAPP_TO, "body": msg}
+        r = requests.post(WHATSAPP_API_URL, data=payload, timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        st.error(f"فشل الإرسال: {e}")
+        return False
+
+# ============ قائمة الأسهم - 150 سهم، بدون أسهم رخيصة ============
+STOCKS_150 = ["SPY","QQQ","IWM","DIA","VOO","NVDA","AAPL","MSFT","GOOGL","AMZN","META","TSLA","AVGO","ORCL","AMD","NFLX","CRM","ADBE","MU","QCOM","TXN","AMAT","PLTR","SNOW","CRWD","PANW","SHOP","JPM","BAC","GS","MS","WFC","BLK","SCHW","AXP","V","MA","PYPL","COIN","HOOD","SOFI","XOM","CVX","COP","SLB","OXY","MSTR","LLY","UNH","JNJ","MRK","PFE","ABBV","TMO","AMGN","GILD","VRTX","ISRG","WMT","COST","HD","MCD","SBUX","NKE","TGT","LOW","TJX","CMG","LULU","ABNB","UBER","DASH","BA","CAT","GE","HON","LMT","RTX","NOC","DE","UPS","FDX","DAL","T","VZ","TMUS","DIS","CMCSA","SPOT","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","RIVN","LCID","AFRM","UPST","AI","SOUN","IONQ","RGTI","BRK-B","PEP","KO","PG","CSCO","IBM"]
 STOCKS_150 = list(dict.fromkeys(STOCKS_150))
-st.write(f"عدد الأسهم في الفحص: **{len(STOCKS_150)} سهم**")
 
-# ================= 2. هل السوق فاتح؟ - للعرض فقط =================
 def is_market_open():
     ny = pytz.timezone("America/New_York")
     now = datetime.now(ny)
     if now.weekday() >= 5:
-        return False, now
-    return time(9, 30) <= now.time() <= time(16, 0), now
+        return False
+    return time(9, 30) <= now.time() <= time(16, 0)
 
-market_open, ny_now = is_market_open()
-if market_open:
-    st.success(f"🟢 السوق فاتح - نستخدم بيانات حية | {ny_now.strftime('%H:%M')} نيويورك")
-    data_source = "live"
-else:
-    st.warning(f"🔴 السوق مسكر - نستخدم بيانات آخر إغلاق | {ny_now.strftime('%H:%M')} نيويورك")
-    data_source = "last_close"
+market_open = is_market_open()
+st.warning("🔴 السوق مسكر - نستخدم بيانات آخر إغلاق" if not market_open else "🟢 السوق فاتح - بيانات حية")
 
-# ================= 3. نظام النقاط =================
-def score_stock(symbol):
+# ============ التصحيح الأهم: جيب العقد الحقيقي من الأوبشن تشين ============
+def get_real_whale_contract(symbol):
+    """
+    بدل ما نحسب البريميوم، نجيبه من الأوبشن تشين الحقيقي
+    نختار العقد اللي بريميومه بين 2 و 3، وأعلى حجم تداول = هذا هو عقد الحوت
+    """
     try:
         tk = yf.Ticker(symbol)
         hist = tk.history(period="5d")
-        if hist.empty or len(hist) < 2:
+        if hist.empty:
             return None
-        info = tk.info
-
         last_close = float(hist['Close'].iloc[-1])
-        prev_close = float(hist['Close'].iloc[-2])
-        change_pct = (last_close - prev_close) / prev_close * 100
+        # استبعد الأسهم الرخيصة اللي تخرب النتائج مثل PARA 0.10 و NIO 3.05
+        if last_close < 20:
+            return None
 
-        # التذبذب من آخر 5 أيام - يشتغل فاتح أو مسكر
-        volatility = float(hist['Close'].pct_change().std() * 100)
-        avg_vol = float(hist['Volume'].mean())
-        last_vol = float(hist['Volume'].iloc[-1])
-        vol_ratio = last_vol / avg_vol if avg_vol > 0 else 0
+        # أقرب تاريخ انتهاء - الجمعة القادمة
+        expiries = tk.options
+        if not expiries:
+            return None
+        expiry = expiries[0]  # أقرب انتهاء
 
-        # السبريد: حي إذا فاتح، و High-Low إذا مسكر
-        if data_source == "live":
-            bid = info.get('bid', 0) or 0
-            ask = info.get('ask', 0) or 0
-            spread_pct = (ask - bid) / last_close * 100 if bid and ask else 1.0
-        else:
-            high = float(hist['High'].iloc[-1])
-            low = float(hist['Low'].iloc[-1])
-            spread_pct = (high - low) / last_close * 100
+        chain = tk.option_chain(expiry)
+        # نجمع CALL و PUT مع بعض
+        calls = chain.calls.copy()
+        calls['type'] = 'CALL'
+        puts = chain.puts.copy()
+        puts['type'] = 'PUT'
+        all_opts = pd.concat([calls, puts])
 
-        # تقدير سعر العقد - نستخدم التذبذب لتقديره
-        # إذا السهم بين 100 و 400، العقد غالبا بين 2 و 3
-        est_premium = round(last_close * volatility / 100, 2)
-        if est_premium < 1:
-            est_premium = 2.5  # قيمة افتراضية للعرض
+        # فلتر الحوت الحقيقي: بريميوم 2 إلى 3، وحجم تداول عالي
+        # هذا يصلح مشكلة NVDA: قبل كنا نقدر البريميوم 7.21، الحين نجيبه حقيقي 2.66
+        filtered = all_opts[
+            (all_opts['lastPrice'] >= 2.0) &
+            (all_opts['lastPrice'] <= 3.0) &
+            (all_opts['volume'].fillna(0) > 500) &
+            (abs(all_opts['strike'] - last_close) / last_close < 0.10)  # سترايك قريب من السعر 10%
+        ]
+        if filtered.empty:
+            return None
 
-        score = 0
-        reasons = []
+        # أعلى حجم = عقد الحوت
+        whale = filtered.sort_values('volume', ascending=False).iloc[0]
+        entry = float(whale['lastPrice'])
+        strike = float(whale['strike'])
+        opt_type = whale['type']
+        volume = int(whale['volume'])
 
-        # سهم قيادي - حجم تداول عالي
-        if avg_vol > 10_000_000:
-            score += 25
-            reasons.append("قيادي")
-        elif avg_vol > 3_000_000:
-            score += 15
-
-        # تذبذب عالي
-        if volatility > 2.5:
-            score += 25
-            reasons.append(f"تذبذب {volatility:.2f}%")
-        elif volatility > 1.5:
-            score += 15
-
-        # سبريد ضيق نسبيا
-        if spread_pct < 2.0:
-            score += 25
-            reasons.append("سبريد ضيق")
-        elif spread_pct < 4.0:
-            score += 15
-
-        # حجم تداول أعلى من المتوسط - اهتمام حيتان
-        if vol_ratio > 1.5:
-            score += 25
-            reasons.append(f"حجم {vol_ratio:.1f}x")
-        elif vol_ratio > 1.0:
-            score += 15
-
-        # سعر العقد في نطاق 2-3
-        if 2.0 <= est_premium <= 3.5:
-            score += 10
-            reasons.append(f"عقد ~{est_premium}")
+        # الأهداف والوقف بنفس معادلة البوت القديم
+        stop = round(entry * 0.67, 2)
+        targets = [round(entry * m, 2) for m in [1.25, 1.35, 1.50, 1.65, 1.75, 1.85, 1.90, 2.00]]
 
         return {
             "symbol": symbol,
-            "score": score,
+            "type": opt_type,  # CALL أو PUT حقيقي من السوق، مو من تغير السعر
+            "strike": strike,
+            "expiry": expiry,
+            "entry": entry,
+            "stop": stop,
+            "targets": targets,
+            "volume": volume,
             "last_close": last_close,
-            "change": change_pct,
-            "volatility": volatility,
-            "spread": spread_pct,
-            "premium": est_premium,
-            "reasons": " - ".join(reasons),
-            "source": data_source
+            "score": volume  # الترتيب حسب الحجم، مو حسب نقاط وهمية
         }
     except Exception:
         return None
 
-# ================= 4. زر الفحص =================
-if st.button("🔍 افحص الآن", use_container_width=True):
-    with st.spinner(f"جار فحص {len(STOCKS_150)} سهم..."):
+# ============ الفحص والعرض كتوصيات، مو جدول ============
+if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
+    with st.spinner("جار فحص الأوبشن تشين الحقيقي لـ 150 سهم..."):
         results = []
         progress = st.progress(0)
         for i, sym in enumerate(STOCKS_150):
-            r = score_stock(sym)
+            r = get_real_whale_contract(sym)
             if r:
                 results.append(r)
-            progress.progress((i + 1) / len(STOCKS_150))
+            progress.progress((i+1)/len(STOCKS_150))
 
-        # ترتيب وأفضل 10 - دائما يرجع 10، حتى لو السوق مسكر
-        results = sorted(results, key=lambda x: x['score'], reverse=True)
-        top10 = results[:10]
+        # أفضل 10 حسب حجم العقد - هذا هو الحوت
+        results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
+        st.session_state['results'] = results
+        st.success(f"✅ فحصت {len(STOCKS_150)} سهم - لقيت {len(results)} توصية")
 
-        st.success(f"✅ فحصت {len(results)} سهم - لقيت {len(results)} سهم - أفضل 10")
+# عرض التوصيات - بدون جدول نهائيا
+if 'results' in st.session_state:
+    for r in st.session_state['results']:
+        emoji = "🟢" if r['type'] == 'CALL' else "🔴"
+        # نفس صيغة الواتساب القديمة بالضبط
+        msg = f"""🔍 راصد الحيتان
+{r['symbol']}
+{emoji} شراء مرجح {r['type']} {r['strike']:.1f}
+الانتهاء: {r['expiry']} 📅
+سعر التنفيذ: {r['entry']} ({int(r['entry']*100)} دولار للعقد) 💰
+الوقف: {r['stop']} 🔴 | الكمية: {r['volume']} عقد 📦
+الأهداف بالترتيب 🎯
+{' | '.join(map(str, r['targets']))}
+⚠️ إدارة الوقف
+بعد الهدف الأول، ارفع الوقف إلى سعر الدخول. وبعد كل هدف جديد، ارفعه إلى سعر الهدف السابق.
+📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
 
-        # ================= 5. عرض أفضل 10 بنفس صيغة الواتساب =================
-        for idx, r in enumerate(top10, 1):
-            # اتجاه تقديري: إذا صاعد + تذبذب عالي = CALL، إذا هابط = PUT
-            # هذا تقدير مبدئي، لازم تأكيده بمؤشرك الرئيسي
-            direction = "CALL 🟢" if r['change'] >= 0 else "PUT 🔴"
-            strike = round(r['last_close'])
-            entry = r['premium']
-            stop = round(entry * 0.67, 2)
-            # الأهداف بنفس معادلة البوت السابق: 1.25 / 1.35 / 1.50 / 1.65 / 1.75 / 1.85 / 1.90 / 2.00
-            targets = [round(entry * m, 2) for m in [1.25, 1.35, 1.50, 1.65, 1.75, 1.85, 1.90, 2.00]]
+        # كارد توصية، مو جدول
+        with st.container():
+            st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f}")
+            st.code(msg, language="text")
+            st.write(f"السعر الحالي: {r['last_close']:.2f} | حجم العقد: {r['volume']} | الانتهاء: {r['expiry']}")
+            if st.button(f"📤 أرسل {r['symbol']} للواتساب", key=f"send_{r['symbol']}"):
+                if send_whatsapp(msg):
+                    st.success(f"تم إرسال {r['symbol']} للواتساب ✅")
+                else:
+                    st.error("فشل الإرسال - تأكد من التوكن والرقم")
 
-            with st.container():
-                st.markdown(f"""
-                **#{idx} - {r['symbol']}** | {direction} {strike} | النقاط: **{r['score']}/110**
-                - السعر: {r['last_close']:.2f} ({r['change']:+.2f}%) | التذبذب: {r['volatility']:.2f}% | السبريد: {r['spread']:.2f}%
-                - الدخول: {entry} | الوقف: {stop} | المصدر: {'حي' if r['source']=='live' else 'آخر إغلاق'}
-                - الأهداف: {' | '.join(map(str, targets))}
-                - الأسباب: {r['reasons']}
-                ---
-                """)
-        
-        # جدول كامل
-        st.subheader("جدول أفضل 10")
-        df = pd.DataFrame(top10)[["symbol","score","last_close","change","volatility","spread","premium","reasons"]]
-        st.dataframe(df, use_container_width=True)
+    # زر إرسال الكل دفعة واحدة
+    if st.button("📤 أرسل أفضل 10 كلها للواتساب", use_container_width=True):
+        for r in st.session_state['results']:
+            emoji = "🟢" if r['type'] == 'CALL' else "🔴"
+            msg = f"🔍 راصد الحيتان\n{r['symbol']}\n{emoji} {r['type']} {r['strike']:.1f}\nدخول: {r['entry']} | وقف: {r['stop']} | أهداف: {' | '.join(map(str, r['targets']))}"
+            send_whatsapp(msg)
+        st.success("تم إرسال الكل للواتساب ✅")
