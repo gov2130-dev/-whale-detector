@@ -1,133 +1,129 @@
-# راصد الحيتان - V4
-# توصيات فقط، بدون جدول - بريميوم حقيقي من الأوبشن تشين - إرسال واتساب
+# راصد الحيتان - V5
+# إصلاح الإرسال + إصلاح بريميوم SPY/QQQ + إصلاح PUT الغلط
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
 from datetime import datetime, time
 import pytz
-import requests
 
 st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("🔍 راصد الحيتان")
 
-# ============ إعدادات الواتساب ============
-# استخدم Twilio WhatsApp أو UltraMsg - حط بياناتك هنا
-WHATSAPP_TOKEN = st.secrets.get("WHATSAPP_TOKEN", "حط_التوكن_هنا")
-WHATSAPP_TO = st.secrets.get("WHATSAPP_TO", "9665xxxxxxxx")  # رقمك بالواتساب
-WHATSAPP_API_URL = "https://api.ultramsg.com/instanceXXXX/messages/chat"  # مثال UltraMsg
+# ============ 1. إرسال واتساب - CallMeBot - يشتغل بدون توكن معقد ============
+# الطريقة اللي تشتغل فعلا: روح واتساب وارسل "I allow callmebot to send me messages" لرقم +34 644 10 47 73
+# بيرد عليك بكود apikey، حطه هنا
+CALLMEBOT_APIKEY = st.secrets.get("CALLMEBOT_APIKEY", "حط_ال apikey هنا")
+CALLMEBOT_PHONE = st.secrets.get("CALLMEBOT_PHONE", "9665xxxxxxxx")  # رقمك بدون +
 
 def send_whatsapp(msg):
+    # نطبع الخطأ عشان نعرف ليش مايرسل، مو نسكت
     try:
-        # UltraMsg مثال - غيره حسب خدمتك
-        payload = {"token": WHATSAPP_TOKEN, "to": WHATSAPP_TO, "body": msg}
-        r = requests.post(WHATSAPP_API_URL, data=payload, timeout=10)
-        return r.status_code == 200
+        url = "https://api.callmebot.com/whatsapp.php"
+        params = {"phone": CALLMEBOT_PHONE, "text": msg, "apikey": CALLMEBOT_APIKEY}
+        r = requests.get(url, params=params, timeout=15)
+        st.write(f"رد الواتساب: {r.status_code} - {r.text[:200]}")  # للتشخيص
+        return r.status_code == 200 and "Message queued" in r.text
     except Exception as e:
-        st.error(f"فشل الإرسال: {e}")
+        st.error(f"خطأ إرسال: {e}")
         return False
 
-# ============ قائمة الأسهم - 150 سهم، بدون أسهم رخيصة ============
-STOCKS_150 = ["SPY","QQQ","IWM","DIA","VOO","NVDA","AAPL","MSFT","GOOGL","AMZN","META","TSLA","AVGO","ORCL","AMD","NFLX","CRM","ADBE","MU","QCOM","TXN","AMAT","PLTR","SNOW","CRWD","PANW","SHOP","JPM","BAC","GS","MS","WFC","BLK","SCHW","AXP","V","MA","PYPL","COIN","HOOD","SOFI","XOM","CVX","COP","SLB","OXY","MSTR","LLY","UNH","JNJ","MRK","PFE","ABBV","TMO","AMGN","GILD","VRTX","ISRG","WMT","COST","HD","MCD","SBUX","NKE","TGT","LOW","TJX","CMG","LULU","ABNB","UBER","DASH","BA","CAT","GE","HON","LMT","RTX","NOC","DE","UPS","FDX","DAL","T","VZ","TMUS","DIS","CMCSA","SPOT","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","RIVN","LCID","AFRM","UPST","AI","SOUN","IONQ","RGTI","BRK-B","PEP","KO","PG","CSCO","IBM"]
-STOCKS_150 = list(dict.fromkeys(STOCKS_150))
+# زر تجربة الإرسال - جربه قبل الفحص
+if st.button("📱 جرب الإرسال الآن"):
+    if send_whatsapp("تجربة راصد الحيتان - إذا وصلتك معناها الإرسال شغال ✅"):
+        st.success("تم الإرسال - شيك واتسابك")
+    else:
+        st.error("ما أرسل - تأكد من apikey والرقم. شوف رسالة الخطأ فوق")
 
-def is_market_open():
-    ny = pytz.timezone("America/New_York")
-    now = datetime.now(ny)
-    if now.weekday() >= 5:
-        return False
-    return time(9, 30) <= now.time() <= time(16, 0)
+# ============ 2. الأسهم ============
+STOCKS = ["SPY","QQQ","NVDA","AAPL","MSFT","GOOGL","AMZN","META","TSLA","AVGO","ORCL","AMD","NFLX","CRM","MU","PLTR","COIN","HOOD","SOFI","MSTR","LLY","UNH","WMT","COST","BA","CAT","DIS","SMCI","ARM","RIVN","BRK-B","JPM","BAC","GS","XOM","CVX"]
+STOCKS = list(dict.fromkeys(STOCKS))
 
-market_open = is_market_open()
-st.warning("🔴 السوق مسكر - نستخدم بيانات آخر إغلاق" if not market_open else "🟢 السوق فاتح - بيانات حية")
-
-# ============ التصحيح الأهم: جيب العقد الحقيقي من الأوبشن تشين ============
-def get_real_whale_contract(symbol):
-    """
-    بدل ما نحسب البريميوم، نجيبه من الأوبشن تشين الحقيقي
-    نختار العقد اللي بريميومه بين 2 و 3، وأعلى حجم تداول = هذا هو عقد الحوت
-    """
+# ============ 3. التصحيح: بريميوم نسبي + فصل CALL عن PUT ============
+def get_whale(symbol):
     try:
         tk = yf.Ticker(symbol)
         hist = tk.history(period="5d")
         if hist.empty:
             return None
-        last_close = float(hist['Close'].iloc[-1])
-        # استبعد الأسهم الرخيصة اللي تخرب النتائج مثل PARA 0.10 و NIO 3.05
-        if last_close < 20:
+        last = float(hist['Close'].iloc[-1])
+        if last < 20:
             return None
 
-        # أقرب تاريخ انتهاء - الجمعة القادمة
         expiries = tk.options
         if not expiries:
             return None
-        expiry = expiries[0]  # أقرب انتهاء
-
+        expiry = expiries[0]
         chain = tk.option_chain(expiry)
-        # نجمع CALL و PUT مع بعض
-        calls = chain.calls.copy()
-        calls['type'] = 'CALL'
-        puts = chain.puts.copy()
-        puts['type'] = 'PUT'
-        all_opts = pd.concat([calls, puts])
 
-        # فلتر الحوت الحقيقي: بريميوم 2 إلى 3، وحجم تداول عالي
-        # هذا يصلح مشكلة NVDA: قبل كنا نقدر البريميوم 7.21، الحين نجيبه حقيقي 2.66
-        filtered = all_opts[
-            (all_opts['lastPrice'] >= 2.0) &
-            (all_opts['lastPrice'] <= 3.0) &
-            (all_opts['volume'].fillna(0) > 500) &
-            (abs(all_opts['strike'] - last_close) / last_close < 0.10)  # سترايك قريب من السعر 10%
-        ]
-        if filtered.empty:
+        # التصحيح هنا: البريميوم كنسبة من سعر السهم، مو رقم ثابت
+        # للأسهم الغالية SPY/QQQ: 0.3% إلى 1.0% من السعر = 2.2 إلى 7.5 لـ SPY
+        # للأسهم الرخيصة: 1.0% إلى 2.0% = 2 إلى 3 لـ NVDA
+        if last > 500:
+            min_prem, max_prem = last * 0.003, last * 0.01  # SPY/QQQ
+        elif last > 200:
+            min_prem, max_prem = last * 0.005, last * 0.015
+        else:
+            min_prem, max_prem = 2.0, 3.0
+
+        def best_in(df, opt_type):
+            df = df.copy()
+            df['type'] = opt_type
+            # سترايك قريب من السعر 5% فقط، مو 10% - عشان ما نجيب عقود بعيدة ميتة
+            f = df[(df['lastPrice'] >= min_prem) & (df['lastPrice'] <= max_prem) &
+                   (df['volume'].fillna(0) > 500) &
+                   (abs(df['strike'] - last) / last < 0.05)]
+            if f.empty:
+                return None
+            return f.sort_values('volume', ascending=False).iloc[0]
+
+        best_call = best_in(chain.calls, 'CALL')
+        best_put = best_in(chain.puts, 'PUT')
+
+        # التصحيح الثاني: لا نختار PUT تلقائيا لأنه أعلى حجم
+        # نعرض الاثنين، ونختار الاتجاه حسب سعر السهم مقارنة بآخر إغلاق
+        # إذا السهم صاعد اليوم، الحوت الأقوى هو CALL، حتى لو PUT حجمه أكبر لأنه تحوط
+        change = (last - float(hist['Close'].iloc[-2])) / float(hist['Close'].iloc[-2]) * 100
+        if change >= 0:
+            # السوق طالع، نفضل CALL
+            whale = best_call if best_call is not None else best_put
+            reason = "السهم صاعد، تجاهلنا PUT التحوط"
+        else:
+            whale = best_put if best_put is not None else best_call
+            reason = "السهم هابط، تجاهلنا CALL التحوط"
+
+        if whale is None:
             return None
 
-        # أعلى حجم = عقد الحوت
-        whale = filtered.sort_values('volume', ascending=False).iloc[0]
         entry = float(whale['lastPrice'])
-        strike = float(whale['strike'])
-        opt_type = whale['type']
-        volume = int(whale['volume'])
-
-        # الأهداف والوقف بنفس معادلة البوت القديم
         stop = round(entry * 0.67, 2)
         targets = [round(entry * m, 2) for m in [1.25, 1.35, 1.50, 1.65, 1.75, 1.85, 1.90, 2.00]]
 
         return {
-            "symbol": symbol,
-            "type": opt_type,  # CALL أو PUT حقيقي من السوق، مو من تغير السعر
-            "strike": strike,
-            "expiry": expiry,
-            "entry": entry,
-            "stop": stop,
-            "targets": targets,
-            "volume": volume,
-            "last_close": last_close,
-            "score": volume  # الترتيب حسب الحجم، مو حسب نقاط وهمية
+            "symbol": symbol, "type": whale['type'], "strike": float(whale['strike']),
+            "expiry": expiry, "entry": entry, "stop": stop, "targets": targets,
+            "volume": int(whale['volume']), "last": last, "change": change,
+            "reason": reason, "prem_range": f"{min_prem:.2f} - {max_prem:.2f}"
         }
-    except Exception:
+    except Exception as e:
         return None
 
-# ============ الفحص والعرض كتوصيات، مو جدول ============
-if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
-    with st.spinner("جار فحص الأوبشن تشين الحقيقي لـ 150 سهم..."):
-        results = []
-        progress = st.progress(0)
-        for i, sym in enumerate(STOCKS_150):
-            r = get_real_whale_contract(sym)
-            if r:
-                results.append(r)
-            progress.progress((i+1)/len(STOCKS_150))
+# ============ 4. الفحص والعرض كتوصيات ============
+if st.button("🔍 افحص الآن", use_container_width=True):
+    results = []
+    prog = st.progress(0)
+    for i, s in enumerate(STOCKS):
+        r = get_whale(s)
+        if r:
+            results.append(r)
+        prog.progress((i+1)/len(STOCKS))
+    results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
+    st.session_state['res'] = results
+    st.success(f"لقيت {len(results)} توصية")
 
-        # أفضل 10 حسب حجم العقد - هذا هو الحوت
-        results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
-        st.session_state['results'] = results
-        st.success(f"✅ فحصت {len(STOCKS_150)} سهم - لقيت {len(results)} توصية")
-
-# عرض التوصيات - بدون جدول نهائيا
-if 'results' in st.session_state:
-    for r in st.session_state['results']:
+if 'res' in st.session_state:
+    for r in st.session_state['res']:
         emoji = "🟢" if r['type'] == 'CALL' else "🔴"
-        # نفس صيغة الواتساب القديمة بالضبط
         msg = f"""🔍 راصد الحيتان
 {r['symbol']}
 {emoji} شراء مرجح {r['type']} {r['strike']:.1f}
@@ -136,25 +132,11 @@ if 'results' in st.session_state:
 الوقف: {r['stop']} 🔴 | الكمية: {r['volume']} عقد 📦
 الأهداف بالترتيب 🎯
 {' | '.join(map(str, r['targets']))}
-⚠️ إدارة الوقف
-بعد الهدف الأول، ارفع الوقف إلى سعر الدخول. وبعد كل هدف جديد، ارفعه إلى سعر الهدف السابق.
 📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
 
-        # كارد توصية، مو جدول
-        with st.container():
-            st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f}")
-            st.code(msg, language="text")
-            st.write(f"السعر الحالي: {r['last_close']:.2f} | حجم العقد: {r['volume']} | الانتهاء: {r['expiry']}")
-            if st.button(f"📤 أرسل {r['symbol']} للواتساب", key=f"send_{r['symbol']}"):
-                if send_whatsapp(msg):
-                    st.success(f"تم إرسال {r['symbol']} للواتساب ✅")
-                else:
-                    st.error("فشل الإرسال - تأكد من التوكن والرقم")
-
-    # زر إرسال الكل دفعة واحدة
-    if st.button("📤 أرسل أفضل 10 كلها للواتساب", use_container_width=True):
-        for r in st.session_state['results']:
-            emoji = "🟢" if r['type'] == 'CALL' else "🔴"
-            msg = f"🔍 راصد الحيتان\n{r['symbol']}\n{emoji} {r['type']} {r['strike']:.1f}\nدخول: {r['entry']} | وقف: {r['stop']} | أهداف: {' | '.join(map(str, r['targets']))}"
-            send_whatsapp(msg)
-        st.success("تم إرسال الكل للواتساب ✅")
+        st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f} - دخول {r['entry']}")
+        st.write(f"السعر: {r['last']:.2f} ({r['change']:+.2f}%) | نطاق البريميوم الصح لهالسهم: {r['prem_range']} | {r['reason']}")
+        st.code(msg)
+        if st.button(f"📤 أرسل {r['symbol']} واتساب", key=f"s_{r['symbol']}"):
+            if send_whatsapp(msg):
+                st.success("تم الإرسال ✅ شيك واتسابك")
