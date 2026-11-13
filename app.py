@@ -1,6 +1,6 @@
 # ============================================================
-# راصد الحيتان - V7 - الإرسال مفتوح
-# بدون Secrets - تكتب رقمك والـ apikey في الصفحة نفسها
+# راصد الحيتان - V8 - الإرسال حسب التحديد
+# لا يوجد رقم ثابت - انت تختار الرقم + تختار أي توصية ترسلها
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -13,33 +13,27 @@ st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("🔍 راصد الحيتان")
 
 # ============================================================
-# 1. الإرسال مفتوح - بدون Secrets
+# 1. الإرسال حسب التحديد - لا يوجد رقم ثابت
 # ============================================================
-st.subheader("📱 إعدادات الواتساب - مفتوح")
+st.subheader("📱 إرسال الواتساب - حسب تحديدك")
 
-# خانات مفتوحة، تقدر تغيرها في أي وقت من الصفحة
-col1, col2 = st.columns(2)
-with col1:
-    phone_input = st.text_input(
-        "رقم الواتساب - 966 + رقمك بدون + وبدون مسافات",
-        value=st.session_state.get("phone", "966551234567"),
-        key="phone_input"
-    )
-with col2:
-    apikey_input = st.text_input(
-        "apikey من CallMeBot",
-        value=st.session_state.get("apikey", ""),
-        type="password",
-        key="apikey_input"
-    )
+# خانة الرقم - تقدر تغيره في أي وقت، مو ثابت
+# تقدر تحط رقم واحد، أو أكثر من رقم مفصول بفاصلة
+recipients_text = st.text_input(
+    "أرقام الواتساب - تقدر تحط رقم واحد أو أكثر مفصول بفاصلة ,",
+    value=st.session_state.get("recipients", "966555371577"),
+    help="مثال: 966555371577 أو 966555371577,966500000000",
+    key="recipients_input"
+)
+st.session_state["recipients"] = recipients_text
 
-# حفظها في session عشان ما تنمسح مع كل تحديث
-st.session_state["phone"] = phone_input
+apikey_input = st.text_input(
+    "apikey من CallMeBot",
+    value=st.session_state.get("apikey", ""),
+    type="password",
+    help="ارسل واتساب 'I allow callmebot to send me messages' لرقم +34 644 10 47 73 عشان يجيك الـ apikey"
+)
 st.session_state["apikey"] = apikey_input
-
-# زر الإرسال التلقائي مفتوح
-auto_send = st.checkbox("✅ إرسال تلقائي للواتساب بعد كل فحص", value=False)
-st.caption("إذا فعلته، بعد ما يخلص الفحص بيرسل أفضل 10 لحاله للواتساب، بدون ما تضغط زر لكل واحد")
 
 def clean_phone(raw):
     p = str(raw).strip()
@@ -52,37 +46,49 @@ def clean_phone(raw):
         p = "966" + p
     return p
 
-def send_whatsapp(msg, phone, apikey):
-    # الإرسال مفتوح - ما يوقفك لو Secrets مو موجود
-    phone_clean = clean_phone(phone)
-    st.write(f"الرقم اللي قاعد أرسل له: {phone_clean} | الطول: {len(phone_clean)} رقم")
-    if len(phone_clean) != 12 or not phone_clean.startswith("966"):
-        st.error(f"الرقم غلط! لازم 12 رقم يبدأ بـ 966، الحين: {phone_clean}")
+def get_recipients():
+    # يفصل الأرقام بالفاصلة، وينظف كل واحد
+    raw_list = str(st.session_state.get("recipients", "")).split(",")
+    clean_list = []
+    for r in raw_list:
+        c = clean_phone(r)
+        if len(c) == 12 and c.startswith("966"):
+            clean_list.append(c)
+    return clean_list
+
+def send_to_selected(msg, phone_list, apikey):
+    # يرسل لنفس الرسالة لكل رقم حددته، مو رقم ثابت واحد
+    if not phone_list:
+        st.error("حط رقم واحد على الأقل بصيغة 966 + رقمك بدون +")
         return False
     if not apikey:
-        st.error("حط الـ apikey في الخانة اللي فوق - عشان تفعل CallMeBot ارسل واتساب 'I allow callmebot to send me messages' لرقم +34 644 10 47 73")
+        st.error("حط الـ apikey في الخانة اللي فوق")
         return False
-    try:
-        url = "https://api.callmebot.com/whatsapp.php"
-        params = {"phone": phone_clean, "text": msg, "apikey": apikey}
-        r = requests.get(url, params=params, timeout=15)
-        st.write(f"رد الواتساب: {r.status_code} - {r.text[:300]}")
-        if "ERROR" in r.text:
-            if "Phone number" in r.text:
-                st.error("المشكلة في الرقم - تأكد أنه 966 + 9 أرقام")
-            elif "apikey" in r.text.lower():
-                st.error("المشكلة في الـ apikey - تأكد أنك فعلت CallMeBot")
-            else:
-                st.error(f"CallMeBot رفض: {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        st.error(f"خطأ إرسال: {e}")
-        return False
+    ok = True
+    for phone in phone_list:
+        try:
+            url = "https://api.callmebot.com/whatsapp.php"
+            params = {"phone": phone, "text": msg, "apikey": apikey}
+            r = requests.get(url, params=params, timeout=15)
+            st.write(f"📤 أرسل لـ {phone}: {r.status_code} - {r.text[:150]}")
+            if "ERROR" in r.text:
+                st.error(f"فشل لـ {phone}: {r.text[:200]}")
+                ok = False
+        except Exception as e:
+            st.error(f"خطأ لـ {phone}: {e}")
+            ok = False
+    return ok
 
-if st.button("📱 جرب الإرسال الآن - مفتوح", use_container_width=True):
-    if send_whatsapp("تجربة راصد الحيتان - إذا وصلتك معناها الإرسال شغال ✅", st.session_state["phone"], st.session_state["apikey"]):
-        st.success("تم الإرسال - شيك واتسابك ✅")
+# عرض الأرقام المحددة حاليا
+phones_now = get_recipients()
+if phones_now:
+    st.success(f"✅ الأرقام المحددة حاليا للإرسال: {', '.join(phones_now)}")
+else:
+    st.warning("⚠️ ما فيه رقم صحيح محدد - حط رقم بصيغة 966555371577")
+
+if st.button("📱 جرب الإرسال الآن - للأرقام المحددة", use_container_width=True):
+    if send_to_selected("تجربة راصد الحيتان - إذا وصلتك معناها الإرسال شغال ✅", phones_now, st.session_state["apikey"]):
+        st.success("تم الإرسال للأرقام المحددة ✅")
 
 st.divider()
 
@@ -128,7 +134,7 @@ STOCKS_150 = list(dict.fromkeys(STOCKS_150))
 st.write(f"عدد الأسهم: **{len(STOCKS_150)} سهم**")
 
 # ============================================================
-# 4. جلب عقد الحوت الحقيقي
+# 4. جلب عقد الحوت
 # ============================================================
 def get_whale(symbol):
     try:
@@ -199,7 +205,7 @@ def make_msg(r):
 📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
 
 # ============================================================
-# 5. الفحص + إرسال تلقائي مفتوح
+# 5. الفحص
 # ============================================================
 if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
     with st.spinner(f"جار فحص {len(STOCKS_150)} سهم..."):
@@ -212,34 +218,53 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
             progress.progress((i + 1) / len(STOCKS_150))
         results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
         st.session_state['results'] = results
+        st.session_state['selected'] = [r['symbol'] for r in results]  # كلها محددة مبدئيا، انت تشيل اللي ما تبيه
         st.success(f"✅ فحصت {len(STOCKS_150)} سهم - لقيت {len(results)} توصية")
 
-        # إرسال تلقائي مفتوح - إذا فعلت الشيك بوكس فوق
-        if auto_send and results:
-            st.info("📤 الإرسال التلقائي مفعل - قاعد أرسل أفضل 10 للواتساب...")
-            for r in results:
-                send_whatsapp(make_msg(r), st.session_state["phone"], st.session_state["apikey"])
-            st.success("تم إرسال الكل تلقائيا ✅")
-
 # ============================================================
-# 6. عرض التوصيات - بدون جدول
+# 6. عرض التوصيات + التحديد + الإرسال حسب التحديد
 # ============================================================
 if 'results' in st.session_state and st.session_state['results']:
-    st.subheader(f"🏆 أفضل 10 توصيات")
+    st.subheader("🏆 أفضل 10 توصيات - حدد اللي تبي ترسله")
+
+    # تحديد جماعي - تختار أي أسهم ترسلها، مو كلها
+    all_symbols = [r['symbol'] for r in st.session_state['results']]
+    selected = st.multiselect(
+        "✅ حدد الأسهم اللي تبي ترسلها للواتساب - اللي تختاره بس هو اللي بينرسل",
+        options=all_symbols,
+        default=st.session_state.get('selected', all_symbols),
+        key="selected_multiselect"
+    )
+    st.session_state['selected'] = selected
+    st.write(f"المحدد حاليا للإرسال: **{len(selected)}** توصية: {', '.join(selected) if selected else 'ما حددت شي'}")
+
+    # زر إرسال المحدد فقط - للأرقام المحددة فوق
+    if st.button(f"📤 أرسل المحدد فقط ({len(selected)}) للأرقام المحددة", use_container_width=True, type="primary"):
+        if not selected:
+            st.error("حدد توصية واحدة على الأقل من القائمة اللي فوق")
+        else:
+            phones = get_recipients()
+            for r in st.session_state['results']:
+                if r['symbol'] in selected:
+                    send_to_selected(make_msg(r), phones, st.session_state["apikey"])
+            st.success(f"تم إرسال {len(selected)} توصية للأرقام: {', '.join(phones)} ✅")
+
+    st.divider()
+
+    # عرض كل توصية مع زر إرسال فردي - يرسل للأرقام المحددة فوق
     for r in st.session_state['results']:
         emoji = "🟢" if r['type'] == 'CALL' else "🔴"
+        is_selected = r['symbol'] in selected
+        tick = "✅ محدد للإرسال" if is_selected else "⬜ غير محدد - ما بينرسل"
         msg = make_msg(r)
         with st.container():
-            st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f} - دخول {r['entry']}")
+            st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f} - دخول {r['entry']} - {tick}")
             st.write(f"السعر: {r['last']:.2f} ({r['change']:+.2f}%) | حجم: {r['volume']} | الانتهاء: {r['expiry']}")
             st.write(f"نطاق البريميوم: {r['prem_range']} | {r['reason']}")
             st.code(msg, language="text")
-            if st.button(f"📤 أرسل {r['symbol']} للواتساب", key=f"send_{r['symbol']}", use_container_width=True):
-                if send_whatsapp(msg, st.session_state["phone"], st.session_state["apikey"]):
-                    st.success(f"تم إرسال {r['symbol']} ✅")
+            # زر فردي يرسل هالتوصية فقط، للأرقام المحددة فوق
+            if st.button(f"📤 أرسل {r['symbol']} فقط للأرقام المحددة", key=f"send_{r['symbol']}", use_container_width=True):
+                phones = get_recipients()
+                if send_to_selected(msg, phones, st.session_state["apikey"]):
+                    st.success(f"تم إرسال {r['symbol']} لـ {', '.join(phones)} ✅")
             st.divider()
-
-    if st.button("📤 أرسل أفضل 10 كلها للواتساب", use_container_width=True):
-        for r in st.session_state['results']:
-            send_whatsapp(make_msg(r), st.session_state["phone"], st.session_state["apikey"])
-        st.success("تم إرسال الكل ✅")
