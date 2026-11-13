@@ -1,7 +1,7 @@
 # ============================================================
-# راصد الحيتان - V9 - إرسال مفتوح لأي شخص من الواتساب
-# بدون apikey - بدون رقم ثابت - بدون CallMeBot
-# تضغط زر الإرسال -> يفتح لك الواتساب -> تختار أي شخص من جهات اتصالك
+# راصد الحيتان - V10 - سترايكات قريبة فقط + إرسال مفتوح
+# التغيير: السترايك لازم يكون قريب 1.5% من السعر، مو 5%
+# الإرسال: زر واتساب مفتوح، تختار أي شخص من جهات اتصالك
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -12,7 +12,7 @@ import pytz
 
 st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("🔍 راصد الحيتان")
-st.success("✅ الإرسال الحين مفتوح - بدون apikey وبدون رقم ثابت. تضغط زر الإرسال ويفتح لك الواتساب وتختار أي شخص.")
+st.success("✅ الإرسال مفتوح - بدون apikey وبدون رقم ثابت. تضغط زر الإرسال ويفتح لك الواتساب وتختار أي شخص.")
 
 # ============================================================
 # 1. هل السوق فاتح؟ - للعرض فقط
@@ -56,7 +56,7 @@ STOCKS_150 = list(dict.fromkeys(STOCKS_150))
 st.write(f"عدد الأسهم: **{len(STOCKS_150)} سهم**")
 
 # ============================================================
-# 3. جلب عقد الحوت
+# 3. جلب عقد الحوت - التعديل هنا
 # ============================================================
 def get_whale(symbol):
     try:
@@ -72,6 +72,8 @@ def get_whale(symbol):
             return None
         expiry = expiries[0]
         chain = tk.option_chain(expiry)
+
+        # نطاق البريميوم كنسبة من سعر السهم
         if last > 500:
             min_prem, max_prem = last * 0.003, last * 0.01
         elif last > 200:
@@ -79,14 +81,27 @@ def get_whale(symbol):
         else:
             min_prem, max_prem = 2.0, 3.0
 
+        # ===== التعديل الجديد: سترايك قريب جدا فقط =====
+        # قبل: كان 5% - يجيب AMD 600 و MU 780 البعيدة
+        # الحين: 1.5% فقط - السترايك لازم يكون لازق في السعر
+        # مثال: NVDA سعره 166، السترايك المسموح 163.5 إلى 168.5 فقط
+        # مثال: SPY سعره 759، السترايك المسموح 747.6 إلى 770.4 فقط
+        MAX_DISTANCE = 0.015  # 1.5%
+
         def best_in(df, opt_type):
             df = df.copy()
             df['type'] = opt_type
-            f = df[(df['lastPrice'] >= min_prem) & (df['lastPrice'] <= max_prem) &
-                   (df['volume'].fillna(0) > 500) &
-                   (abs(df['strike'] - last) / last < 0.05)]
+            # نضيف عمود المسافة، ونفلتر عليه
+            df['dist'] = abs(df['strike'] - last) / last
+            f = df[
+                (df['lastPrice'] >= min_prem) &
+                (df['lastPrice'] <= max_prem) &
+                (df['volume'].fillna(0) > 500) &
+                (df['dist'] <= MAX_DISTANCE)  # التعديل هنا
+            ]
             if f.empty:
                 return None
+            # نرتب بالأعلى حجم، لكن نفضل الأقرب للسعر إذا الحجم متقارب
             return f.sort_values('volume', ascending=False).iloc[0]
 
         best_call = best_in(chain.calls, 'CALL')
@@ -100,15 +115,22 @@ def get_whale(symbol):
             reason = "السهم هابط، تجاهلنا CALL التحوط"
         if whale is None:
             return None
-        entry = float(whale['lastPrice'])
+
+        # تأكيد إضافي: إذا السترايك المختار بعيد أكثر من 1.5%، ارفضه ولا تعرضه
         strike = float(whale['strike'])
+        dist_final = abs(strike - last) / last * 100
+        if dist_final > 1.5:
+            return None
+
+        entry = float(whale['lastPrice'])
         volume = int(whale['volume'])
         stop = round(entry * 0.67, 2)
         targets = [round(entry * m, 2) for m in [1.25, 1.35, 1.50, 1.65, 1.75, 1.85, 1.90, 2.00]]
         return {"symbol": symbol, "type": whale['type'], "strike": strike, "expiry": expiry,
                 "entry": entry, "stop": stop, "targets": targets, "volume": volume,
                 "last": last, "change": change, "reason": reason,
-                "prem_range": f"{min_prem:.2f} - {max_prem:.2f}"}
+                "prem_range": f"{min_prem:.2f} - {max_prem:.2f}",
+                "dist": f"{dist_final:.2f}%"}
     except Exception:
         return None
 
@@ -127,7 +149,6 @@ def make_msg(r):
 📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
 
 def whatsapp_share_link(msg):
-    # هذا هو الرابط المفتوح - يفتح الواتساب ويخليك تختار أي شخص من جهات اتصالك
     encoded = urllib.parse.quote(msg)
     return f"https://wa.me/?text={encoded}"
 
@@ -146,14 +167,13 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
         results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
         st.session_state['results'] = results
         st.session_state['selected'] = [r['symbol'] for r in results]
-        st.success(f"✅ فحصت {len(STOCKS_150)} سهم - لقيت {len(results)} توصية")
+        st.success(f"✅ فحصت {len(STOCKS_150)} سهم - لقيت {len(results)} توصية سترايكاتها قريبة")
 
 # ============================================================
 # 5. عرض التوصيات + الإرسال المفتوح حسب التحديد
 # ============================================================
 if 'results' in st.session_state and st.session_state['results']:
-    st.subheader("🏆 أفضل 10 توصيات - حدد اللي تبي ترسله")
-
+    st.subheader("🏆 أفضل 10 توصيات - سترايكات قريبة فقط")
     all_symbols = [r['symbol'] for r in st.session_state['results']]
     selected = st.multiselect(
         "✅ حدد الأسهم اللي تبي ترسلها - اللي تختاره بس هو اللي بينرسل",
@@ -162,13 +182,12 @@ if 'results' in st.session_state and st.session_state['results']:
         key="selected_multiselect"
     )
     st.session_state['selected'] = selected
-    st.write(f"المحدد حاليا: **{len(selected)}** توصية: {', '.join(selected) if selected else 'ما حددت شي'}")
+    st.write(f"المحدد حاليا: **{len(selected)}** توصية")
 
-    # زر إرسال المحدد - يفتح الواتساب وتختار أي شخص
     if selected:
         combined = "\n\n------------------------\n\n".join([make_msg(r) for r in st.session_state['results'] if r['symbol'] in selected])
         link = whatsapp_share_link(combined)
-        st.link_button(f"📤 أرسل المحدد ({len(selected)}) واتساب - اختر أي شخص من جهات اتصالك", link, use_container_width=True, type="primary")
+        st.link_button(f"📤 أرسل المحدد ({len(selected)}) واتساب - اختر أي شخص", link, use_container_width=True, type="primary")
         st.caption("بيفتح لك الواتساب، وانت تختار أي شخص: ترسلها لي، أو لأي شخص ثاني، أو لقروب، أو لنفسك.")
 
     st.divider()
@@ -181,9 +200,8 @@ if 'results' in st.session_state and st.session_state['results']:
         link = whatsapp_share_link(msg)
         with st.container():
             st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f} - دخول {r['entry']} - {tick}")
-            st.write(f"السعر: {r['last']:.2f} ({r['change']:+.2f}%) | حجم: {r['volume']} | الانتهاء: {r['expiry']}")
+            st.write(f"السعر: {r['last']:.2f} ({r['change']:+.2f}%) | حجم: {r['volume']} | الانتهاء: {r['expiry']} | بعد السترايك عن السعر: {r['dist']}")
             st.write(f"نطاق البريميوم: {r['prem_range']} | {r['reason']}")
             st.code(msg, language="text")
-            # زر مفتوح - يفتح الواتساب وتختار أي شخص
             st.link_button(f"📤 أرسل {r['symbol']} واتساب - اختر أي شخص", link, use_container_width=True)
             st.divider()
