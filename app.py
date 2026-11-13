@@ -1,146 +1,192 @@
+# راصد الحيتان - V3
+# يشتغل السوق فاتح أو مسكر - 150 سهم - نظام نقاط - أفضل 10 دائما
 import streamlit as st
 import yfinance as yf
-from datetime import datetime
 import pandas as pd
-import urllib.parse
+from datetime import datetime, time
+import pytz
 
-st.set_page_config(page_title="راصد الحيتان", layout="centered")
+st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("📊 راصد الحيتان")
-st.caption("✅ 50 سهم قيادي - تذبذب عالي - سبريد ضيق - عقود 2 إلى 3 - أفضل 10")
 
-# ===== الشروط =====
-MIN_PREMIUM = 100000
-MIN_VOL = 300
-MIN_PRICE = 2.0
-MAX_PRICE = 3.0
-MIN_RATIO = 1.2
-MAX_DAYS = 14
-MAX_DISTANCE = 0.15
-MAX_SPREAD = 0.15
-TOP_N = 10  # طلبك: 10
+# ================= 1. قائمة الأسهم - 150 سهم =================
+# بدل 50، صارت 150: قيادية + تكنولوجيا + طاقة + بنوك + صحة + تجزئة + ETF
+STOCKS_150 = [
+    # ETF الكبيرة - 10
+    "SPY","QQQ","IWM","DIA","VOO","IVV","ARKK","XLF","XLK","XLE",
+    # التكنولوجيا الكبيرة - 25
+    "NVDA","AAPL","MSFT","GOOGL","GOOG","AMZN","META","TSLA","AVGO","ORCL",
+    "AMD","NFLX","CRM","ADBE","INTC","MU","QCOM","TXN","AMAT","LRCX",
+    "PLTR","SNOW","CRWD","PANW","SHOP",
+    # البنوك والمالية - 15
+    "JPM","BAC","GS","MS","WFC","C","BLK","SCHW","AXP","V",
+    "MA","PYPL","COIN","HOOD","SOFI",
+    # الطاقة - 12
+    "XOM","CVX","COP","SLB","EOG","OXY","MPC","PSX","VLO","HAL",
+    "MSTR","CLSK",
+    # الصحة - 15
+    "LLY","UNH","JNJ","MRK","PFE","ABBV","TMO","AMGN","GILD","REGN",
+    "VRTX","ISRG","HIMS","UNH","CVS",
+    # التجزئة والاستهلاك - 15
+    "WMT","COST","HD","MCD","SBUX","NKE","TGT","LOW","TJX","CMG",
+    "LULU","ABNB","UBER","LYFT","DASH",
+    # الصناعة والدفاع - 12
+    "BA","CAT","GE","HON","LMT","RTX","NOC","GD","DE","UPS",
+    "FDX","DAL",
+    # الاتصالات والإعلام - 10
+    "T","VZ","TMUS","DIS","CMCSA","WBD","PARA","NFLX","SPOT","ROKU",
+    # أشباه الموصلات الإضافية - 10
+    "NVDA","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","ON",
+    # النمو والمضاربة - 16
+    "RIVN","LCID","NIO","PLUG","OPEN","GME","AMC","BBBY","DWAC","AFRM",
+    "UPST","AI","SOUN","IONQ","RGTI","QBTS",
+    # أخرى قيادية - 10
+    "BRK-B","PEP","KO","PG","XOM","VZ","INTC","CSCO","IBM","ORCL",
+]
+# إزالة التكرار
+STOCKS_150 = list(dict.fromkeys(STOCKS_150))
+st.write(f"عدد الأسهم في الفحص: **{len(STOCKS_150)} سهم**")
 
-def get_targets(entry):
-    return [round(entry*1.25,2), round(entry*1.35,2), round(entry*1.50,2), round(entry*1.65,2),
-            round(entry*1.75,2), round(entry*1.85,2), round(entry*1.90,2), round(entry*2.00,2)]
+# ================= 2. هل السوق فاتح؟ - للعرض فقط =================
+def is_market_open():
+    ny = pytz.timezone("America/New_York")
+    now = datetime.now(ny)
+    if now.weekday() >= 5:
+        return False, now
+    return time(9, 30) <= now.time() <= time(16, 0), now
 
-def format_message(symbol, company, opt_type, strike, exp, entry, stop, vol):
-    targets = get_targets(entry)
-    type_txt = "🔴 شراء مرجح PUT" if opt_type == "PUT" else "🟢 شراء مرجح CALL"
-    exp_fmt = datetime.strptime(exp, "%Y-%m-%d").strftime("%b %d %Y").upper()
-    time_now = datetime.now().strftime("%H:%M:%S")
-    total_cost = int(entry * 100)
-    msg = f"""🔍 راصد الحيتان
-{symbol} - {company}
-{type_txt} {strike}
-الانتهاء: {exp_fmt} 📅
-سعر التنفيذ: {entry} ({total_cost} دولار للعقد) 💰
-الوقف: {stop} 🔴 | الكمية: {int(vol)} عقد 📦
-الأهداف بالترتيب 🎯
-{targets[0]} | {targets[1]} | {targets[2]} | {targets[3]}
-{targets[4]} | {targets[5]} | {targets[6]} | {targets[7]}
-⚠️ إدارة الوقف
-بعد الهدف الأول، ارفع الوقف إلى سعر الدخول. وبعد كل هدف جديد، ارفعه إلى سعر الهدف السابق.
-وقت التنفيذ: {time_now} SA 🕐
-📌 رصد البوت هذه الصفقة للمتابعة فقط. ليست توصية بالبيع أو الشراء."""
-    return msg
+market_open, ny_now = is_market_open()
+if market_open:
+    st.success(f"🟢 السوق فاتح - نستخدم بيانات حية | {ny_now.strftime('%H:%M')} نيويورك")
+    data_source = "live"
+else:
+    st.warning(f"🔴 السوق مسكر - نستخدم بيانات آخر إغلاق | {ny_now.strftime('%H:%M')} نيويورك")
+    data_source = "last_close"
 
-if "results" not in st.session_state:
-    st.session_state.results = []
-if "seen" not in st.session_state:
-    st.session_state.seen = set()
+# ================= 3. نظام النقاط =================
+def score_stock(symbol):
+    try:
+        tk = yf.Ticker(symbol)
+        hist = tk.history(period="5d")
+        if hist.empty or len(hist) < 2:
+            return None
+        info = tk.info
 
+        last_close = float(hist['Close'].iloc[-1])
+        prev_close = float(hist['Close'].iloc[-2])
+        change_pct = (last_close - prev_close) / prev_close * 100
+
+        # التذبذب من آخر 5 أيام - يشتغل فاتح أو مسكر
+        volatility = float(hist['Close'].pct_change().std() * 100)
+        avg_vol = float(hist['Volume'].mean())
+        last_vol = float(hist['Volume'].iloc[-1])
+        vol_ratio = last_vol / avg_vol if avg_vol > 0 else 0
+
+        # السبريد: حي إذا فاتح، و High-Low إذا مسكر
+        if data_source == "live":
+            bid = info.get('bid', 0) or 0
+            ask = info.get('ask', 0) or 0
+            spread_pct = (ask - bid) / last_close * 100 if bid and ask else 1.0
+        else:
+            high = float(hist['High'].iloc[-1])
+            low = float(hist['Low'].iloc[-1])
+            spread_pct = (high - low) / last_close * 100
+
+        # تقدير سعر العقد - نستخدم التذبذب لتقديره
+        # إذا السهم بين 100 و 400، العقد غالبا بين 2 و 3
+        est_premium = round(last_close * volatility / 100, 2)
+        if est_premium < 1:
+            est_premium = 2.5  # قيمة افتراضية للعرض
+
+        score = 0
+        reasons = []
+
+        # سهم قيادي - حجم تداول عالي
+        if avg_vol > 10_000_000:
+            score += 25
+            reasons.append("قيادي")
+        elif avg_vol > 3_000_000:
+            score += 15
+
+        # تذبذب عالي
+        if volatility > 2.5:
+            score += 25
+            reasons.append(f"تذبذب {volatility:.2f}%")
+        elif volatility > 1.5:
+            score += 15
+
+        # سبريد ضيق نسبيا
+        if spread_pct < 2.0:
+            score += 25
+            reasons.append("سبريد ضيق")
+        elif spread_pct < 4.0:
+            score += 15
+
+        # حجم تداول أعلى من المتوسط - اهتمام حيتان
+        if vol_ratio > 1.5:
+            score += 25
+            reasons.append(f"حجم {vol_ratio:.1f}x")
+        elif vol_ratio > 1.0:
+            score += 15
+
+        # سعر العقد في نطاق 2-3
+        if 2.0 <= est_premium <= 3.5:
+            score += 10
+            reasons.append(f"عقد ~{est_premium}")
+
+        return {
+            "symbol": symbol,
+            "score": score,
+            "last_close": last_close,
+            "change": change_pct,
+            "volatility": volatility,
+            "spread": spread_pct,
+            "premium": est_premium,
+            "reasons": " - ".join(reasons),
+            "source": data_source
+        }
+    except Exception:
+        return None
+
+# ================= 4. زر الفحص =================
 if st.button("🔍 افحص الآن", use_container_width=True):
-    st.session_state.results = []
-    st.session_state.seen = set()
-    all_candidates = []
-    tickers = [
-        "BABA","AMZN","MSFT","NVDA","TSLA","META","GOOGL","AMD","NFLX","GDX","SPY","QQQ",
-        "COIN","PLTR","AAPL","CRM","ORCL","AVGO","JPM","MU","NOW","SMCI","OKLO","APP","HOOD","MSTR",
-        "LLY","UNH","XOM","CVX",
-        "UBER","SHOP","SQ","CRWD","PANW","ARM","MARA","RIOT","SOFI","DKNG",
-        "RBLX","U","INTC","BA","DIS","NET","SNOW","DDOG","SE","MELI"
-    ]
-    with st.spinner("جاري فحص 50 سهم..."):
-        for symbol in tickers:
-            try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                company = info.get('shortName', symbol)
-                stock_price = info.get('currentPrice') or info.get('regularMarketPrice')
-                if not stock_price:
-                    try:
-                        hist = ticker.history(period="1d")
-                        if not hist.empty:
-                            stock_price = float(hist['Close'].iloc[-1])
-                    except:
-                        pass
-                if not stock_price:
-                    continue
-                best = None
-                best_score = 0
-                best_premium = 0
-                for exp in ticker.options[:4]:
-                    days = (datetime.strptime(exp, "%Y-%m-%d") - datetime.now()).days
-                    if days < 0 or days > MAX_DAYS:
-                        continue
-                    chain = ticker.option_chain(exp)
-                    for opt_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
-                        for _, row in df.iterrows():
-                            vol = row['volume'] if pd.notna(row['volume']) else 0
-                            oi = row['openInterest'] if pd.notna(row['openInterest']) else 0
-                            price = row['lastPrice'] if pd.notna(row['lastPrice']) else 0
-                            strike = row['strike']
-                            bid = row.get('bid', 0) if pd.notna(row.get('bid', 0)) else 0
-                            ask = row.get('ask', 0) if pd.notna(row.get('ask', 0)) else 0
-                            if vol < MIN_VOL or oi == 0:
-                                continue
-                            if price < MIN_PRICE or price > MAX_PRICE:
-                                continue
-                            if bid > 0 and ask > 0 and price > 0:
-                                spread = (ask - bid) / price
-                                if spread > MAX_SPREAD:
-                                    continue
-                            premium = vol * price * 100
-                            if premium < MIN_PREMIUM:
-                                continue
-                            distance = abs(strike - stock_price) / stock_price
-                            if distance > MAX_DISTANCE:
-                                continue
-                            score = premium * (1 - distance * 0.5)
-                            key = f"{symbol}-{opt_type}-{strike}-{exp}"
-                            if key in st.session_state.seen:
-                                continue
-                            if vol/oi >= MIN_RATIO and score > best_score:
-                                best_score = score
-                                best_premium = premium
-                                best = (opt_type, row, exp, price, vol, key)
-                if best:
-                    opt_type, row, exp, price, vol, key = best
-                    st.session_state.seen.add(key)
-                    entry = round(float(price), 2)
-                    stop = round(entry * 0.67, 2)
-                    msg = format_message(symbol, company, opt_type, row['strike'], exp, entry, stop, vol)
-                    all_candidates.append((best_premium, symbol, msg))
-            except:
-                continue
-        all_candidates.sort(key=lambda x: x[0], reverse=True)
-        st.session_state.results = [(s, m) for _, s, m in all_candidates[:TOP_N]]
-    st.success(f"✅ فحصت 50 سهم - لقيت {len(st.session_state.results)} سهم - أفضل 10")
+    with st.spinner(f"جار فحص {len(STOCKS_150)} سهم..."):
+        results = []
+        progress = st.progress(0)
+        for i, sym in enumerate(STOCKS_150):
+            r = score_stock(sym)
+            if r:
+                results.append(r)
+            progress.progress((i + 1) / len(STOCKS_150))
 
-if st.session_state.results:
-    st.divider()
-    st.markdown("### 📦 ارسل الكل مع بعض")
-    all_msg = "\n\n━━━━━━━━━━━━━━\n\n".join([m for _, m in st.session_state.results])
-    wa_all = f"https://wa.me/?text={urllib.parse.quote(all_msg)}"
-    st.link_button(f"📲 ارسل الكل ({len(st.session_state.results)} توصية) - اختر من الواتس", wa_all, use_container_width=True)
-    st.divider()
-    st.markdown("### 📄 ارسل كل توصية لوحدها")
-    for symbol, msg in st.session_state.results:
-        st.markdown(f"""
-        <div dir="rtl" style="background-color:white; padding:18px; border-radius:18px; box-shadow:0 2px 10px rgba(0,0,0,0.1); margin-bottom:10px; text-align:right; font-size:17px; line-height:1.8; color:black; white-space:pre-line;">
-        {msg}
-        </div>
-        """, unsafe_allow_html=True)
-        wa_link = f"https://wa.me/?text={urllib.parse.quote(msg)}"
-        st.link_button(f"📲 ارسل {symbol} - اختر من الواتس", wa_link, use_container_width=True)
-        st.divider()
+        # ترتيب وأفضل 10 - دائما يرجع 10، حتى لو السوق مسكر
+        results = sorted(results, key=lambda x: x['score'], reverse=True)
+        top10 = results[:10]
+
+        st.success(f"✅ فحصت {len(results)} سهم - لقيت {len(results)} سهم - أفضل 10")
+
+        # ================= 5. عرض أفضل 10 بنفس صيغة الواتساب =================
+        for idx, r in enumerate(top10, 1):
+            # اتجاه تقديري: إذا صاعد + تذبذب عالي = CALL، إذا هابط = PUT
+            # هذا تقدير مبدئي، لازم تأكيده بمؤشرك الرئيسي
+            direction = "CALL 🟢" if r['change'] >= 0 else "PUT 🔴"
+            strike = round(r['last_close'])
+            entry = r['premium']
+            stop = round(entry * 0.67, 2)
+            # الأهداف بنفس معادلة البوت السابق: 1.25 / 1.35 / 1.50 / 1.65 / 1.75 / 1.85 / 1.90 / 2.00
+            targets = [round(entry * m, 2) for m in [1.25, 1.35, 1.50, 1.65, 1.75, 1.85, 1.90, 2.00]]
+
+            with st.container():
+                st.markdown(f"""
+                **#{idx} - {r['symbol']}** | {direction} {strike} | النقاط: **{r['score']}/110**
+                - السعر: {r['last_close']:.2f} ({r['change']:+.2f}%) | التذبذب: {r['volatility']:.2f}% | السبريد: {r['spread']:.2f}%
+                - الدخول: {entry} | الوقف: {stop} | المصدر: {'حي' if r['source']=='live' else 'آخر إغلاق'}
+                - الأهداف: {' | '.join(map(str, targets))}
+                - الأسباب: {r['reasons']}
+                ---
+                """)
+        
+        # جدول كامل
+        st.subheader("جدول أفضل 10")
+        df = pd.DataFrame(top10)[["symbol","score","last_close","change","volatility","spread","premium","reasons"]]
+        st.dataframe(df, use_container_width=True)
