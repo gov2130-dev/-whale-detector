@@ -1,7 +1,8 @@
 # ============================================================
-# راصد الحيتان - V11 - إصلاح زر الإرسال
-# المشكلة: رابط 10 توصيات مع بعض كان طويل وينكسر، والزر ما يفتح
-# الحل: كل توصية زر لحالها + رابط api.whatsapp.com + يفتح في تبويب جديد
+# راصد الحيتان - V12 - إرسال الجميع + إرسال كل واحدة
+# زر الجميع: نسخة مختصرة سطر لكل سهم عشان الرابط ما ينكسر
+# زر كل واحدة: رسالة كاملة مفصلة
+# الاثنين: يفتحون الواتساب وتختار أي شخص
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -12,7 +13,7 @@ import pytz
 
 st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("🔍 راصد الحيتان")
-st.success("✅ الإرسال مفتوح - اضغط زر أي توصية، بيفتح لك الواتساب وتختار أي شخص.")
+st.success("✅ زرين شغالين: زر الجميع فوق، وزر كل توصية لحالها تحت.")
 
 def is_market_open():
     ny = pytz.timezone("America/New_York")
@@ -104,7 +105,6 @@ def get_whale(symbol):
 
 def make_msg(r):
     emoji = "🟢" if r['type'] == 'CALL' else "🔴"
-    # رسالة مختصرة عشان الرابط ما يطول وينكسر
     return f"""🔍 راصد الحيتان
 {r['symbol']} {emoji} {r['type']} {r['strike']:.1f}
 الانتهاء: {r['expiry']}
@@ -112,13 +112,23 @@ def make_msg(r):
 أهداف: {' | '.join(map(str, r['targets']))}
 📌 للمتابعة فقط، ليست توصية بيع أو شراء"""
 
-def whatsapp_button(msg, label, key):
-    # زر HTML حقيقي، يفتح في تبويب جديد - يشتغل على الجوال
-    # نستخدم api.whatsapp.com مو wa.me/?text= لأنه يشتغل داخل المتصفح
+def make_compact_all(results, selected):
+    # نسخة الجميع مختصرة جدا: سطر واحد لكل سهم
+    # عشان الرابط يبقى قصير ويفتح، مو مثل قبل 3500 حرف
+    lines = ["🔍 راصد الحيتان - أفضل 10"]
+    for r in results:
+        if r['symbol'] in selected:
+            emoji = "🟢" if r['type'] == 'CALL' else "🔴"
+            # سطر واحد: NVDA 🔴 PUT 165 دخول 2.59 وقف 1.74 أهداف 3.24 | 3.5 | 3.88
+            lines.append(f"{r['symbol']} {emoji} {r['type']} {r['strike']:.0f} دخول {r['entry']} وقف {r['stop']} أهداف {' | '.join(map(str, r['targets'][:3]))}")
+    lines.append("📌 للمتابعة فقط")
+    return "\n".join(lines)
+
+def whatsapp_button(msg, label, bg="#25D366"):
     encoded = urllib.parse.quote(msg)
     url = f"https://api.whatsapp.com/send?text={encoded}"
     st.markdown(
-        f"""<a href="{url}" target="_blank" style="display:block; text-align:center; background-color:#25D366; color:white; padding:14px 20px; border-radius:12px; text-decoration:none; font-weight:bold; font-size:18px; margin:10px 0;">{label}</a>""",
+        f"""<a href="{url}" target="_blank" style="display:block; text-align:center; background-color:{bg}; color:white; padding:14px 20px; border-radius:12px; text-decoration:none; font-weight:bold; font-size:18px; margin:10px 0;">{label}</a>""",
         unsafe_allow_html=True
     )
 
@@ -133,12 +143,35 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
             progress.progress((i + 1) / len(STOCKS_150))
         results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
         st.session_state['results'] = results
+        st.session_state['selected'] = [r['symbol'] for r in results]
         st.success(f"✅ لقيت {len(results)} توصية")
 
 if 'results' in st.session_state and st.session_state['results']:
-    st.subheader("🏆 أفضل 10 توصيات - اضغط أي زر وبيفتح الواتساب")
-    st.caption("ملاحظة: ألغينا زر 'أرسل الكل مع بعض' لأنه كان يخلي الرابط طويل وما يفتح. الحين كل توصية زر لحالها، وتقدر ترسلها لأي شخص تختاره من الواتساب.")
+    st.subheader("🏆 أفضل 10 توصيات")
 
+    # ===== 1. التحديد =====
+    all_symbols = [r['symbol'] for r in st.session_state['results']]
+    selected = st.multiselect(
+        "✅ حدد الأسهم اللي تبي ترسلها - اللي تختاره بس هو اللي بينرسل في زر الجميع",
+        options=all_symbols,
+        default=st.session_state.get('selected', all_symbols),
+        key="selected_multiselect"
+    )
+    st.session_state['selected'] = selected
+    st.write(f"المحدد حاليا: **{len(selected)}** توصية")
+
+    # ===== 2. زر إرسال الجميع - رجعناه، بس بنسخة مختصرة =====
+    if selected:
+        compact_msg = make_compact_all(st.session_state['results'], selected)
+        st.caption(f"زر الجميع بيرسل نسخة مختصرة - سطر لكل سهم - عشان الرابط يفتح. الطول: {len(compact_msg)} حرف فقط، مو 3500 مثل قبل.")
+        # زر الجميع لونه أزرق عشان تفرقه عن زر كل واحدة الأخضر
+        whatsapp_button(compact_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
+        st.code(compact_msg, language="text")
+
+    st.divider()
+    st.subheader("📤 أو أرسل كل واحدة لحالها - رسالة كاملة مفصلة")
+
+    # ===== 3. زر كل واحدة لحالها - مثل اللي في صورتك، شغال =====
     for r in st.session_state['results']:
         emoji = "🟢" if r['type'] == 'CALL' else "🔴"
         msg = make_msg(r)
@@ -146,6 +179,5 @@ if 'results' in st.session_state and st.session_state['results']:
             st.markdown(f"### {emoji} {r['symbol']} - {r['type']} {r['strike']:.1f} - دخول {r['entry']}")
             st.write(f"السعر: {r['last']:.2f} ({r['change']:+.2f}%) | حجم: {r['volume']} | الانتهاء: {r['expiry']} | بعد السترايك: {r['dist']}")
             st.code(msg, language="text")
-            # الزر الحقيقي المفعّل - HTML يفتح تبويب جديد
-            whatsapp_button(msg, f"📤 أرسل {r['symbol']} واتساب - اختر أي شخص", f"wa_{r['symbol']}")
+            whatsapp_button(msg, f"📤 أرسل {r['symbol']} واتساب - اختر أي شخص", bg="#25D366")
             st.divider()
