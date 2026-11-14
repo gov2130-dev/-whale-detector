@@ -1,8 +1,8 @@
 # ============================================================
-# راصد الحيتان - V12 - إرسال الجميع + إرسال كل واحدة
-# زر الجميع: نسخة مختصرة سطر لكل سهم عشان الرابط ما ينكسر
-# زر كل واحدة: رسالة كاملة مفصلة
-# الاثنين: يفتحون الواتساب وتختار أي شخص
+# راصد الحيتان - V13 - الكود الكامل بعد التعديل
+# التعديل: رجعنا تاريخ الانتهاء في زر الجميع - كان ناقص
+# زر الجميع: مختصر + مع التاريخ - زر كل واحدة: مفصل + مع التاريخ
+# الإرسال: مفتوح، يفتح الواتساب وتختار أي شخص
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -13,7 +13,7 @@ import pytz
 
 st.set_page_config(page_title="راصد الحيتان", layout="wide")
 st.title("🔍 راصد الحيتان")
-st.success("✅ زرين شغالين: زر الجميع فوق، وزر كل توصية لحالها تحت.")
+st.success("✅ زرين شغالين: زر الجميع فوق مع التاريخ، وزر كل توصية لحالها تحت.")
 
 def is_market_open():
     ny = pytz.timezone("America/New_York")
@@ -112,15 +112,15 @@ def make_msg(r):
 أهداف: {' | '.join(map(str, r['targets']))}
 📌 للمتابعة فقط، ليست توصية بيع أو شراء"""
 
+# ===== التعديل V13 هنا - رجعنا التاريخ في زر الجميع =====
 def make_compact_all(results, selected):
-    # نسخة الجميع مختصرة جدا: سطر واحد لكل سهم
-    # عشان الرابط يبقى قصير ويفتح، مو مثل قبل 3500 حرف
     lines = ["🔍 راصد الحيتان - أفضل 10"]
     for r in results:
         if r['symbol'] in selected:
             emoji = "🟢" if r['type'] == 'CALL' else "🔴"
-            # سطر واحد: NVDA 🔴 PUT 165 دخول 2.59 وقف 1.74 أهداف 3.24 | 3.5 | 3.88
-            lines.append(f"{r['symbol']} {emoji} {r['type']} {r['strike']:.0f} دخول {r['entry']} وقف {r['stop']} أهداف {' | '.join(map(str, r['targets'][:3]))}")
+            # نختصر التاريخ: 2026-11-13 -> 11-13 عشان الرابط يبقى قصير
+            expiry_short = r['expiry'][5:] if len(r['expiry']) >= 10 else r['expiry']
+            lines.append(f"{r['symbol']} {emoji} {r['type']} {r['strike']:.0f} انتهاء {expiry_short} دخول {r['entry']} وقف {r['stop']} أهداف {' | '.join(map(str, r['targets'][:3]))}")
     lines.append("📌 للمتابعة فقط")
     return "\n".join(lines)
 
@@ -149,7 +149,6 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
 if 'results' in st.session_state and st.session_state['results']:
     st.subheader("🏆 أفضل 10 توصيات")
 
-    # ===== 1. التحديد =====
     all_symbols = [r['symbol'] for r in st.session_state['results']]
     selected = st.multiselect(
         "✅ حدد الأسهم اللي تبي ترسلها - اللي تختاره بس هو اللي بينرسل في زر الجميع",
@@ -160,18 +159,16 @@ if 'results' in st.session_state and st.session_state['results']:
     st.session_state['selected'] = selected
     st.write(f"المحدد حاليا: **{len(selected)}** توصية")
 
-    # ===== 2. زر إرسال الجميع - رجعناه، بس بنسخة مختصرة =====
+    # ===== زر إرسال الجميع - مع التاريخ الحين =====
     if selected:
         compact_msg = make_compact_all(st.session_state['results'], selected)
-        st.caption(f"زر الجميع بيرسل نسخة مختصرة - سطر لكل سهم - عشان الرابط يفتح. الطول: {len(compact_msg)} حرف فقط، مو 3500 مثل قبل.")
-        # زر الجميع لونه أزرق عشان تفرقه عن زر كل واحدة الأخضر
+        st.caption(f"زر الجميع بيرسل نسخة مختصرة مع تاريخ الانتهاء. الطول: {len(compact_msg)} حرف.")
         whatsapp_button(compact_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
         st.code(compact_msg, language="text")
 
     st.divider()
     st.subheader("📤 أو أرسل كل واحدة لحالها - رسالة كاملة مفصلة")
 
-    # ===== 3. زر كل واحدة لحالها - مثل اللي في صورتك، شغال =====
     for r in st.session_state['results']:
         emoji = "🟢" if r['type'] == 'CALL' else "🔴"
         msg = make_msg(r)
