@@ -1,14 +1,14 @@
 # ============================================================
-# حيتان ابو راكان - V16 - النسخة النهائية بدون تكرار
-# التعديل: التوصيات تنذكر مرة واحدة بس، مو مرتين
-# حذفنا صندوق الجميع اللي كان يعيد عرض التوصيات فوق
-# صار عندنا: عنوان + زر الجميع + 10 توصيات كل واحدة بزرها
+# حيتان ابو راكان - V17 - النسخة النهائية
+# التعديل: إضافة تاريخ ووقت البحث أعلى رسالة الواتساب
+# التاريخ يثبت لحظة الفحص، مو لحظة الإرسال
 # ============================================================
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import urllib.parse
 from datetime import datetime, date
+import pytz
 
 st.set_page_config(page_title="حيتان ابو راكان", layout="wide")
 st.title("🔍 حيتان ابو راكان")
@@ -112,15 +112,27 @@ Entry: ${r['entry']} Bid: ${r['bid']}
 Stop: ${r['stop']}
 Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)"""
 
+# ===== V17: نجيب وقت البحث المحفوظ ونحطه أعلى الرسالة =====
+def get_search_time_text():
+    # إذا فيه وقت فحص محفوظ، نستخدمه. إذا ما فيه، نستخدم الحين
+    search_time = st.session_state.get('search_time', None)
+    if search_time is None:
+        ny = pytz.timezone("America/New_York")
+        search_time = datetime.now(ny)
+    # الصيغة: 📅 بحث: 2026-11-14 | ⏰ 16:05 نيويورك
+    return f"📅 بحث: {search_time.strftime('%Y-%m-%d')} | ⏰ {search_time.strftime('%H:%M')} نيويورك"
+
 def make_all_msg(results, selected):
-    blocks = ["حيتان ابو راكان:"]
+    header = get_search_time_text()
+    blocks = [header, "حيتان ابو راكان:"]
     for r in results:
         if r['symbol'] in selected:
             blocks.append(make_msg(r))
     return "\n\n".join(blocks)
 
 def make_single_msg(r):
-    return f"حيتان ابو راكان:\n{make_msg(r)}"
+    header = get_search_time_text()
+    return f"{header}\n\nحيتان ابو راكان:\n{make_msg(r)}"
 
 def whatsapp_button(msg, label, bg="#25D366"):
     encoded = urllib.parse.quote(msg)
@@ -131,6 +143,9 @@ def whatsapp_button(msg, label, bg="#25D366"):
     )
 
 if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
+    # ===== V17: نسجل وقت البحث هنا، لحظة الضغط على الفحص =====
+    ny = pytz.timezone("America/New_York")
+    st.session_state['search_time'] = datetime.now(ny)
     with st.spinner(f"جار فحص {len(STOCKS_150)} سهم..."):
         results = []
         progress = st.progress(0)
@@ -145,8 +160,10 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
         st.success(f"✅ لقيت {len(results)} توصية")
 
 if 'results' in st.session_state and st.session_state['results']:
-    # ===== عنوان واحد بس، بدون تكرار =====
     st.subheader("🏆 أفضل وأقوى 10 توصيات")
+    # نعرض وقت البحث في التطبيق بعد، عشان تعرف متى فحصت
+    if 'search_time' in st.session_state:
+        st.caption(f"{get_search_time_text()}")
 
     all_symbols = [r['symbol'] for r in st.session_state['results']]
     selected = st.multiselect(
@@ -157,14 +174,12 @@ if 'results' in st.session_state and st.session_state['results']:
     )
     st.session_state['selected'] = selected
 
-    # زر الجميع - بس زر، بدون صندوق يعيد عرض التوصيات فوق
     if selected:
         all_msg = make_all_msg(st.session_state['results'], selected)
         whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
 
     st.divider()
 
-    # ===== التوصيات تنذكر مرة واحدة بس هنا =====
     for idx, r in enumerate(st.session_state['results'], start=1):
         emoji = "🔴" if r['type'] == 'PUT' else "🟢"
         single = make_single_msg(r)
