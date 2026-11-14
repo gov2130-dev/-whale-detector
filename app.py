@@ -1,7 +1,8 @@
 # ============================================================
-# حيتان ابو راكان - V15 - النسخة النهائية
-# التعديل: حذفنا رسالة السوق فاتح / مسكر نهائيا
-# + ثبتنا البيد: ما يطلع أعلى من الدخول أبدا
+# حيتان ابو راكان - V16 - النسخة النهائية بدون تكرار
+# التعديل: التوصيات تنذكر مرة واحدة بس، مو مرتين
+# حذفنا صندوق الجميع اللي كان يعيد عرض التوصيات فوق
+# صار عندنا: عنوان + زر الجميع + 10 توصيات كل واحدة بزرها
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -11,9 +12,6 @@ from datetime import datetime, date
 
 st.set_page_config(page_title="حيتان ابو راكان", layout="wide")
 st.title("🔍 حيتان ابو راكان")
-
-# ملاحظة: حذفنا كود السوق فاتح / مسكر من هنا نهائيا
-# ما عاد فيه أي رسالة حمراء أو خضراء فوق
 
 STOCKS_150 = [
     "SPY","QQQ","IWM","DIA","VOO","IVV","ARKK","XLF","XLK","XLE",
@@ -79,13 +77,10 @@ def get_whale(symbol):
         if abs(strike - last) / last > 0.015:
             return None
         entry = float(whale['lastPrice'])
-        # ===== إصلاح البيد V15: ما يطلع أعلى من الدخول أبدا =====
         try:
             raw_bid = float(whale['bid']) if pd.notna(whale['bid']) and float(whale['bid']) > 0 else round(entry * 0.95, 2)
         except:
             raw_bid = round(entry * 0.95, 2)
-        # إذا البيد أعلى من الدخول، نخليه يساوي الدخول أو 95% منه
-        # مثال TSLA قبل: Entry 5.05 Bid 5.15 - الحين بيصير Bid 4.80
         bid = min(raw_bid, round(entry * 0.95, 2))
         volume = int(whale['volume'])
         stop = round(entry * 0.5, 2)
@@ -150,28 +145,32 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
         st.success(f"✅ لقيت {len(results)} توصية")
 
 if 'results' in st.session_state and st.session_state['results']:
-    st.subheader("🏆 أفضل 10 توصيات - بصيغة حيتان ابو راكان")
+    # ===== عنوان واحد بس، بدون تكرار =====
+    st.subheader("🏆 أفضل وأقوى 10 توصيات")
+
     all_symbols = [r['symbol'] for r in st.session_state['results']]
     selected = st.multiselect(
-        "✅ حدد الأسهم اللي تبي ترسلها",
+        "✅ حدد الأسهم اللي تبي ترسلها في زر الجميع",
         options=all_symbols,
         default=st.session_state.get('selected', all_symbols),
         key="selected_multiselect"
     )
     st.session_state['selected'] = selected
-    st.write(f"المحدد حاليا: **{len(selected)}** توصية")
+
+    # زر الجميع - بس زر، بدون صندوق يعيد عرض التوصيات فوق
     if selected:
         all_msg = make_all_msg(st.session_state['results'], selected)
         whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
-        st.code(all_msg, language="text")
+
     st.divider()
-    st.subheader("📤 أو أرسل كل واحدة لحالها")
-    for r in st.session_state['results']:
+
+    # ===== التوصيات تنذكر مرة واحدة بس هنا =====
+    for idx, r in enumerate(st.session_state['results'], start=1):
         emoji = "🔴" if r['type'] == 'PUT' else "🟢"
         single = make_single_msg(r)
         with st.container():
-            st.markdown(f"### {emoji} {r['symbol']} {r['strike']:.0f} {r['type']} 🐋")
-            st.write(f"Stock: ${r['last']:.2f} | Exp: {r['expiry']} ({r['days_left']}d) | حجم: {r['volume']} | بعد السترايك: {r['dist']}")
-            st.code(single, language="text")
+            st.markdown(f"### {idx}. {emoji} {r['symbol']} {r['strike']:.0f} {r['type']} 🐋")
+            st.write(f"Exp: {r['expiry']} ({r['days_left']}d) Stock: ${r['last']:.2f} | Entry: ${r['entry']} Bid: ${r['bid']} | Stop: ${r['stop']} | حجم: {r['volume']}")
+            st.write(f"Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)")
             whatsapp_button(single, f"📤 أرسل {r['symbol']} واتساب - اختر أي شخص", bg="#25D366")
             st.divider()
