@@ -1,36 +1,19 @@
 # ============================================================
-# راصد الحيتان - V14 - بصيغة حيتان ابو راكان
-# الصيغة الجديدة:
-# حيتان ابو راكان:
-# 🔴 QQQ 708 PUT 🐋
-# Exp: 2026-09-01 (0d) Stock: $707.64
-# Entry: $0.4 Bid: $0.38
-# Stop: $0.2
-# Target: $0.6 (+50%) | $0.92 (+130%) | $1.28 (+220%)
+# حيتان ابو راكان - V15 - النسخة النهائية
+# التعديل: حذفنا رسالة السوق فاتح / مسكر نهائيا
+# + ثبتنا البيد: ما يطلع أعلى من الدخول أبدا
 # ============================================================
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import urllib.parse
-from datetime import datetime, date, time
-import pytz
+from datetime import datetime, date
 
-st.set_page_config(page_title="راصد الحيتان", layout="wide")
+st.set_page_config(page_title="حيتان ابو راكان", layout="wide")
 st.title("🔍 حيتان ابو راكان")
-st.success("✅ بصيغة حيتان ابو راكان - زر الجميع + زر كل واحدة، الاثنين يفتحون الواتساب وتختار أي شخص.")
 
-def is_market_open():
-    ny = pytz.timezone("America/New_York")
-    now = datetime.now(ny)
-    if now.weekday() >= 5:
-        return False, now
-    return time(9, 30) <= now.time() <= time(16, 0), now
-
-market_open, ny_now = is_market_open()
-if market_open:
-    st.success(f"🟢 السوق فاتح | {ny_now.strftime('%H:%M')} نيويورك")
-else:
-    st.warning(f"🔴 السوق مسكر | {ny_now.strftime('%H:%M')} نيويورك")
+# ملاحظة: حذفنا كود السوق فاتح / مسكر من هنا نهائيا
+# ما عاد فيه أي رسالة حمراء أو خضراء فوق
 
 STOCKS_150 = [
     "SPY","QQQ","IWM","DIA","VOO","IVV","ARKK","XLF","XLK","XLE",
@@ -95,22 +78,20 @@ def get_whale(symbol):
         strike = float(whale['strike'])
         if abs(strike - last) / last > 0.015:
             return None
-
-        # ===== بيانات بصيغة ابو راكان =====
         entry = float(whale['lastPrice'])
-        # Bid: ناخذه من العقد نفسه، إذا ما كان موجود نحسبه 95% من الدخول
+        # ===== إصلاح البيد V15: ما يطلع أعلى من الدخول أبدا =====
         try:
-            bid = float(whale['bid']) if pd.notna(whale['bid']) and float(whale['bid']) > 0 else round(entry * 0.95, 2)
+            raw_bid = float(whale['bid']) if pd.notna(whale['bid']) and float(whale['bid']) > 0 else round(entry * 0.95, 2)
         except:
-            bid = round(entry * 0.95, 2)
+            raw_bid = round(entry * 0.95, 2)
+        # إذا البيد أعلى من الدخول، نخليه يساوي الدخول أو 95% منه
+        # مثال TSLA قبل: Entry 5.05 Bid 5.15 - الحين بيصير Bid 4.80
+        bid = min(raw_bid, round(entry * 0.95, 2))
         volume = int(whale['volume'])
-        # Stop: 50% من الدخول، مثل مثالك: دخول 0.4 وقف 0.2، دخول 1.8 وقف 0.9
         stop = round(entry * 0.5, 2)
-        # Targets: +50% و +130% و +220% مثل مثالك بالضبط
-        t1 = round(entry * 1.5, 2)   # +50%
-        t2 = round(entry * 2.3, 2)   # +130%
-        t3 = round(entry * 3.2, 2)   # +220%
-        # الأيام المتبقية للانتهاء: (0d) (1d)
+        t1 = round(entry * 1.5, 2)
+        t2 = round(entry * 2.3, 2)
+        t3 = round(entry * 3.2, 2)
         try:
             exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
             days_left = (exp_date - date.today()).days
@@ -118,7 +99,6 @@ def get_whale(symbol):
                 days_left = 0
         except:
             days_left = 0
-
         return {"symbol": symbol, "type": whale['type'], "strike": strike, "expiry": expiry,
                 "entry": entry, "bid": bid, "stop": stop,
                 "t1": t1, "t2": t2, "t3": t3,
@@ -128,10 +108,8 @@ def get_whale(symbol):
     except Exception:
         return None
 
-# ===== الصيغة الجديدة - مثل حيتان ابو راكان بالضبط =====
 def make_msg(r):
     emoji = "🔴" if r['type'] == 'PUT' else "🟢"
-    # نعرض السترايك بدون .0 إذا كان صحيح: 708 مو 708.0
     strike_str = f"{r['strike']:.0f}" if r['strike'] == int(r['strike']) else f"{r['strike']:.1f}"
     return f"""{emoji} {r['symbol']} {strike_str} {r['type']} 🐋
 Exp: {r['expiry']} ({r['days_left']}d) Stock: ${r['last']:.2f}
@@ -140,7 +118,6 @@ Stop: ${r['stop']}
 Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)"""
 
 def make_all_msg(results, selected):
-    # زر الجميع: نفس الصيغة، بس كل التوصيات تحت بعض
     blocks = ["حيتان ابو راكان:"]
     for r in results:
         if r['symbol'] in selected:
@@ -148,7 +125,6 @@ def make_all_msg(results, selected):
     return "\n\n".join(blocks)
 
 def make_single_msg(r):
-    # زر كل واحدة: نفس الصيغة + عنوان
     return f"حيتان ابو راكان:\n{make_msg(r)}"
 
 def whatsapp_button(msg, label, bg="#25D366"):
@@ -175,7 +151,6 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
 
 if 'results' in st.session_state and st.session_state['results']:
     st.subheader("🏆 أفضل 10 توصيات - بصيغة حيتان ابو راكان")
-
     all_symbols = [r['symbol'] for r in st.session_state['results']]
     selected = st.multiselect(
         "✅ حدد الأسهم اللي تبي ترسلها",
@@ -185,16 +160,12 @@ if 'results' in st.session_state and st.session_state['results']:
     )
     st.session_state['selected'] = selected
     st.write(f"المحدد حاليا: **{len(selected)}** توصية")
-
-    # ===== زر إرسال الجميع - بنفس الصيغة =====
     if selected:
         all_msg = make_all_msg(st.session_state['results'], selected)
         whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
         st.code(all_msg, language="text")
-
     st.divider()
     st.subheader("📤 أو أرسل كل واحدة لحالها")
-
     for r in st.session_state['results']:
         emoji = "🔴" if r['type'] == 'PUT' else "🟢"
         single = make_single_msg(r)
