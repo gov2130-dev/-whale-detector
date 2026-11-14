@@ -1,9 +1,8 @@
 # ============================================================
-# حيتان ابو راكان - V22 - القائد SPX و NDX
-# التصحيح: SPY و QQQ مو قادة، هم تابعين
-# القائد: SPX (^GSPC) و NDX (^NDX)
-# والأسهم اللي تخالف السوق بقوة نسبية، ما نحذفها، نعطيها أولوية
-# لأن السهم اللي يطلع والسوق نازل، فيه قوة حقيقية
+# حيتان ابو راكان - لوحة قراءة صناع السوق
+# الفكرة: ما نعطي CALL / PUT
+# نعرض البيانات الخام مثل ما هي، وانت اللي تقرر
+# إذا السوق مسكر، التطبيق يقول السوق مسكر، ما يعطي توصيات وهمية
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -13,8 +12,8 @@ from datetime import datetime, date
 import pytz
 import numpy as np
 
-st.set_page_config(page_title="حيتان ابو راكان", layout="wide")
-st.title("🔍 حيتان ابو راكان")
+st.set_page_config(page_title="حيتان ابو راكان - لوحة البيانات", layout="wide")
+st.title("📊 حيتان ابو راكان - لوحة قراءة صناع السوق")
 
 STOCKS_150 = [
     "SPY","QQQ","IWM","DIA","VOO","IVV","ARKK","XLF","XLK","XLE",
@@ -37,54 +36,24 @@ STOCKS_150 = [
 ]
 STOCKS_150 = list(dict.fromkeys(STOCKS_150))
 
-# ===== 1. قراءة القائد الحقيقي: SPX و NDX =====
-def get_leaders_regime():
-    """القائد: SPX (^GSPC) و NDX (^NDX) - هم اللي يحركون السوق، مو SPY و QQQ"""
-    try:
-        leaders = {}
-        for sym, name in [("^GSPC","SPX"), ("^NDX","NDX")]:
-            tk = yf.Ticker(sym)
-            hist = tk.history(period="1mo", interval="1d")
-            if hist.empty or len(hist) < 10:
-                continue
-            last = float(hist['Close'].iloc[-1])
-            lows = hist['Low'].tail(10).values
-            highs = hist['High'].tail(10).values
-            vwap = (hist['Close'] * hist['Volume']).sum() / hist['Volume'].sum()
-            higher_lows = lows[-1] > lows[0]
-            higher_highs = highs[-1] > highs[0]
-            lower_lows = lows[-1] < lows[0]
-            lower_highs = highs[-1] < highs[0]
-            above_vwap = last > vwap
-            if higher_lows and higher_highs and above_vwap:
-                leaders[name] = "CALL"
-            elif lower_lows and lower_highs and not above_vwap:
-                leaders[name] = "PUT"
-            else:
-                leaders[name] = "NEUTRAL"
-            leaders[f"{name}_chg"] = float((hist['Close'].iloc[-1] - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6] * 100)
-        spx = leaders.get("SPX", "NEUTRAL")
-        ndx = leaders.get("NDX", "NEUTRAL")
-        spx_chg = leaders.get("SPX_chg", 0)
-        ndx_chg = leaders.get("NDX_chg", 0)
-        # إذا SPX و NDX متفقين، السوق له اتجاه واضح. إذا مختلفين، السوق منقسم
-        if spx == ndx and spx != "NEUTRAL":
-            regime = spx
-            text = f"SPX {spx} ({spx_chg:+.2f}%) و NDX {ndx} ({ndx_chg:+.2f}%) متفقين"
-        elif spx != ndx:
-            regime = "MIXED"
-            text = f"SPX {spx} ({spx_chg:+.2f}%) و NDX {ndx} ({ndx_chg:+.2f}%) مختلفين - السوق منقسم"
-        else:
-            regime = "NEUTRAL"
-            text = f"SPX {spx} و NDX {ndx} - بدون اتجاه واضح"
-        return regime, text, spx_chg, ndx_chg, leaders
-    except Exception as e:
-        return "NEUTRAL", "ما قدرنا نقرأ SPX و NDX", 0, 0, {}
+# ===== هل السوق مفتوح ولا مسكر؟ =====
+def is_market_open():
+    ny = pytz.timezone("America/New_York")
+    now = datetime.now(ny)
+    # السبت والأحد السوق مسكر
+    if now.weekday() >= 5:
+        return False, f"السوق مسكر - اليوم {now.strftime('%A')} - البيانات من إغلاق الجمعة، لا تعتمد عليها"
+    # السوق يفتح 9:30 ويقفل 16:00 بتوقيت نيويورك
+    open_time = now.replace(hour=9, minute=30, second=0)
+    close_time = now.replace(hour=16, minute=0, second=0)
+    if open_time <= now <= close_time:
+        return True, f"السوق مفتوح - {now.strftime('%H:%M')} نيويورك"
+    return False, f"السوق مسكر الآن - {now.strftime('%H:%M')} نيويورك - السوق يفتح 9:30"
 
-def calc_max_pain(calls, puts, last):
+def calc_max_pain(calls, puts):
     try:
         strikes = sorted(set(calls['strike'].tolist()) | set(puts['strike'].tolist()))
-        best = last
+        best = None
         min_pain = float('inf')
         for s in strikes:
             call_pain = ((s - calls['strike']).clip(lower=0) * calls['openInterest']).sum()
@@ -93,11 +62,71 @@ def calc_max_pain(calls, puts, last):
             if total < min_pain:
                 min_pain = total
                 best = s
-        return float(best)
+        return float(best) if best is not None else None
     except:
-        return last
+        return None
 
-def get_whale(symbol, market_regime, spx_chg, ndx_chg):
+def calc_gex_wall(calls, puts, last):
+    try:
+        gex_by_strike = {}
+        for df, sign in [(calls, 1), (puts, -1)]:
+            for _, row in df.iterrows():
+                try:
+                    strike = float(row['strike'])
+                    oi = float(row['openInterest']) if pd.notna(row['openInterest']) else 0
+                    gamma = row['gamma'] if 'gamma' in row and pd.notna(row['gamma']) else None
+                    if gamma is None:
+                        iv = float(row['impliedVolatility']) if pd.notna(row['impliedVolatility']) else 0.3
+                        if iv <= 0:
+                            iv = 0.3
+                        gamma = 0.02 / (iv * 10)
+                    gex = sign * gamma * oi * 100 * last
+                    gex_by_strike[strike] = gex_by_strike.get(strike, 0) + gex
+                except:
+                    continue
+        if not gex_by_strike:
+            return None, 0
+        wall = max(gex_by_strike, key=lambda k: abs(gex_by_strike[k]))
+        total = sum(gex_by_strike.values())
+        return float(wall), float(total)
+    except:
+        return None, 0
+
+def calc_poc(hist_long):
+    try:
+        prices = hist_long['Close'].values
+        vols = hist_long['Volume'].values
+        lo, hi = prices.min(), prices.max()
+        if hi == lo:
+            return float(prices[-1])
+        bins = np.linspace(lo, hi, 20)
+        idx = np.digitize(prices, bins)
+        vol_by_bin = {}
+        for i, v in zip(idx, vols):
+            vol_by_bin[i] = vol_by_bin.get(i, 0) + v
+        poc_bin = max(vol_by_bin, key=lambda k: vol_by_bin[k])
+        poc = (bins[min(poc_bin, len(bins)-1)] + bins[max(poc_bin-1, 0)]) / 2
+        return float(poc)
+    except:
+        return None
+
+def get_leaders_chg():
+    """نقرأ SPX و NDX، هم القادة، مو SPY و QQQ"""
+    out = {}
+    for sym, name in [("^GSPC","SPX"), ("^NDX","NDX")]:
+        try:
+            tk = yf.Ticker(sym)
+            h = tk.history(period="1mo", interval="1d")
+            if h.empty:
+                continue
+            chg_5d = float((h['Close'].iloc[-1] - h['Close'].iloc[-6]) / h['Close'].iloc[-6] * 100)
+            chg_1d = float((h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2] * 100)
+            out[name] = {"chg_5d": chg_5d, "chg_1d": chg_1d, "last": float(h['Close'].iloc[-1])}
+        except:
+            continue
+    return out
+
+def get_stock_data(symbol, leaders):
     try:
         tk = yf.Ticker(symbol)
         hist = tk.history(period="5d")
@@ -110,44 +139,6 @@ def get_whale(symbol, market_regime, spx_chg, ndx_chg):
         if hist_long.empty:
             return None
 
-        # ===== 2. بنية السعر للسهم نفسه =====
-        lows = hist_long['Low'].tail(10).values
-        highs = hist_long['High'].tail(10).values
-        vwap = (hist_long['Close'] * hist_long['Volume']).sum() / hist_long['Volume'].sum()
-        higher_lows = lows[-1] > lows[0]
-        higher_highs = highs[-1] > highs[0]
-        lower_lows = lows[-1] < lows[0]
-        lower_highs = highs[-1] < highs[0]
-        above_vwap = last > vwap
-
-        if higher_lows and higher_highs and above_vwap:
-            stock_trend = "CALL"
-        elif lower_lows and lower_highs and not above_vwap:
-            stock_trend = "PUT"
-        else:
-            return None
-
-        # ===== 3. القوة النسبية: هل السهم يمشي مع السوق ولا يخالفه؟ =====
-        # هذا هو التصحيح الأساسي: السهم المخالف ما نحذفه، نفحص قوته
-        stock_chg_5d = float((hist_long['Close'].iloc[-1] - hist_long['Close'].iloc[-6]) / hist_long['Close'].iloc[-6] * 100)
-        # القائد اللي يخص السهم: أسهم التكنولوجيا تقارن مع NDX، الباقي مع SPX
-        tech = symbol in ["NVDA","AAPL","MSFT","GOOGL","GOOG","AMZN","META","TSLA","AVGO","ORCL","AMD","NFLX","CRM","ADBE","INTC","MU","QCOM","TXN","AMAT","LRCX","PLTR","SNOW","CRWD","PANW","SHOP","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","ON","QQQ"]
-        leader_chg = ndx_chg if tech else spx_chg
-        leader_name = "NDX" if tech else "SPX"
-        # القوة النسبية = أداء السهم - أداء القائد
-        rs = stock_chg_5d - leader_chg
-        # هل السهم يمشي مع القائد ولا يخالفه؟
-        follows = (stock_trend == market_regime) or market_regime in ["NEUTRAL","MIXED"]
-        diverges = not follows
-
-        # إذا السهم يخالف السوق، لازم تكون قوته النسبية قوية جدا عشان نقبله
-        # مثال: السوق PUT -2% والسهم CALL +3%، معناه RS = +5%، هذا سهم قوي، نقبله
-        # أما إذا السوق PUT -2% والسهم CALL +0.2%، معناه RS = +2.2% بس، هذا مو مخالف حقيقي، هذا متذبذب، نرفضه
-        if diverges:
-            if abs(rs) < 3.0:
-                return None  # مخالف ضعيف، مو مخالف حقيقي، نرفضه
-            # مخالف قوي، نكمل ونعطيه أولوية، لأن فيه قوة شراء حقيقية
-
         expiries = tk.options
         if not expiries:
             return None
@@ -157,63 +148,67 @@ def get_whale(symbol, market_regime, spx_chg, ndx_chg):
         if calls.empty or puts.empty:
             return None
 
-        # ===== 4. صانع السوق للتأكيد، مو للقلب =====
-        max_pain = calc_max_pain(calls, puts, last)
-        # إذا صانع السوق يسحب السعر عكس اتجاه السهم بقوة، نرفض، ما ننقلب
-        if stock_trend == "CALL" and max_pain < last * 0.98:
-            return None
-        if stock_trend == "PUT" and max_pain > last * 1.02:
-            return None
+        # ===== بيانات خام، بدون شروط، بدون CALL / PUT =====
+        max_pain = calc_max_pain(calls, puts)
+        gamma_wall, total_gex = calc_gex_wall(calls, puts, last)
+        poc = calc_poc(hist_long)
 
+        call_oi = calls['openInterest'].fillna(0).sum()
+        put_oi = puts['openInterest'].fillna(0).sum()
+        pcr_oi = put_oi / call_oi if call_oi > 0 else None
         call_vol = calls['volume'].fillna(0).sum()
         put_vol = puts['volume'].fillna(0).sum()
-        pcr_vol = put_vol / call_vol if call_vol > 0 else 1
-        if stock_trend == "CALL" and pcr_vol > 1.3:
-            return None
-        if stock_trend == "PUT" and pcr_vol < 0.7:
-            return None
+        pcr_vol = put_vol / call_vol if call_vol > 0 else None
 
-        direction = stock_trend
-        df = calls if direction == "CALL" else puts
+        # أداء السهم
+        chg_1d = float((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] * 100)
+        chg_5d = float((hist_long['Close'].iloc[-1] - hist_long['Close'].iloc[-6]) / hist_long['Close'].iloc[-6] * 100)
 
-        if last > 500:
-            min_prem, max_prem = last * 0.003, last * 0.01
-        elif last > 200:
-            min_prem, max_prem = last * 0.005, last * 0.015
-        else:
-            min_prem, max_prem = 2.0, 3.0
+        # القوة النسبية مقابل القائد الصح
+        tech = symbol in ["NVDA","AAPL","MSFT","GOOGL","GOOG","AMZN","META","TSLA","AVGO","ORCL","AMD","NFLX","CRM","ADBE","INTC","MU","QCOM","TXN","AMAT","LRCX","PLTR","SNOW","CRWD","PANW","SHOP","SMCI","ARM","ASML","TSM","MRVL","KLAC","SNPS","CDNS","ON","QQQ"]
+        leader_name = "NDX" if tech else "SPX"
+        leader_chg = leaders.get(leader_name, {}).get("chg_5d", 0)
+        rs = chg_5d - leader_chg
 
-        candidates = []
-        for _, row in df.iterrows():
+        # وين السعر بالنسبة لمستويات صانع السوق؟ مجرد وصف، مو توصية
+        # إذا السعر فوق Max Pain، نكتب "فوق Max Pain"، ما نقول CALL ولا PUT
+        def pos_vs(level):
+            if level is None:
+                return "-"
+            diff = (last - level) / level * 100
+            if diff > 0.5:
+                return f"فوق بـ {diff:.2f}%"
+            elif diff < -0.5:
+                return f"تحت بـ {abs(diff):.2f}%"
+            else:
+                return "عند المستوى"
+
+        # أكبر عقد من ناحية OI × Volume - وين صانع السوق متواجد؟ مجرد معلومة
+        # نعرض أكبر عقد كول وأكبر عقد بوت، بدون ما نختار واحد
+        def top_contract(df):
             try:
-                strike = float(row['strike'])
-                entry = float(row['lastPrice'])
-                vol = float(row['volume']) if pd.notna(row['volume']) else 0
-                oi = float(row['openInterest']) if pd.notna(row['openInterest']) else 0
-                bid = float(row['bid']) if pd.notna(row['bid']) else 0
-                if abs(strike - last) / last > 0.015:
-                    continue
-                if not (min_prem <= entry <= max_prem):
-                    continue
-                if vol < 500 or oi < 500:
-                    continue
-                strength = oi * vol
-                candidates.append({"strike": strike, "entry": entry, "volume": int(vol), "oi": int(oi),
-                                   "bid": bid, "strength": strength, "type": direction})
+                best = None
+                best_score = -1
+                for _, row in df.iterrows():
+                    vol = float(row['volume']) if pd.notna(row['volume']) else 0
+                    oi = float(row['openInterest']) if pd.notna(row['openInterest']) else 0
+                    score = vol * oi
+                    if score > best_score:
+                        best_score = score
+                        best = row
+                if best is None:
+                    return "-"
+                strike = float(best['strike'])
+                entry = float(best['lastPrice'])
+                vol = int(float(best['volume'])) if pd.notna(best['volume']) else 0
+                oi = int(float(best['openInterest'])) if pd.notna(best['openInterest']) else 0
+                return f"{strike:.0f} @ ${entry:.2f} (V:{vol} OI:{oi})"
             except:
-                continue
-        if not candidates:
-            return None
-        candidates = sorted(candidates, key=lambda x: x['strength'], reverse=True)
-        whale = candidates[0]
-        strike = whale['strike']
-        entry = whale['entry']
-        bid = min(whale['bid'] if whale['bid'] > 0 else round(entry * 0.95, 2), round(entry * 0.95, 2))
-        volume = whale['volume']
-        stop = round(entry * 0.5, 2)
-        t1 = round(entry * 1.5, 2)
-        t2 = round(entry * 2.3, 2)
-        t3 = round(entry * 3.2, 2)
+                return "-"
+
+        top_call = top_contract(calls)
+        top_put = top_contract(puts)
+
         try:
             exp_date = datetime.strptime(expiry, "%Y-%m-%d").date()
             days_left = (exp_date - date.today()).days
@@ -221,94 +216,117 @@ def get_whale(symbol, market_regime, spx_chg, ndx_chg):
                 days_left = 0
         except:
             days_left = 0
-        change = (last - float(hist['Close'].iloc[-2])) / float(hist['Close'].iloc[-2]) * 100
-        return {"symbol": symbol, "type": direction, "strike": strike, "expiry": expiry,
-                "entry": entry, "bid": bid, "stop": stop,
-                "t1": t1, "t2": t2, "t3": t3,
-                "volume": volume, "last": last, "change": change,
-                "days_left": days_left, "max_pain": max_pain, "pcr_vol": round(pcr_vol, 2),
-                "oi": whale['oi'], "stock_trend": stock_trend, "market_regime": market_regime,
-                "rs": round(rs, 2), "leader_name": leader_name, "diverges": diverges,
-                "stock_chg": round(stock_chg_5d, 2), "leader_chg": round(leader_chg, 2),
-                "dist": f"{abs(strike-last)/last*100:.2f}%"}
-    except Exception:
+
+        return {
+            "symbol": symbol,
+            "last": last,
+            "chg_1d": chg_1d,
+            "chg_5d": chg_5d,
+            "expiry": expiry,
+            "days_left": days_left,
+            "max_pain": max_pain,
+            "max_pain_pos": pos_vs(max_pain),
+            "gamma_wall": gamma_wall,
+            "gamma_pos": pos_vs(gamma_wall),
+            "poc": poc,
+            "poc_pos": pos_vs(poc),
+            "pcr_oi": pcr_oi,
+            "pcr_vol": pcr_vol,
+            "rs": rs,
+            "leader_name": leader_name,
+            "leader_chg": leader_chg,
+            "total_gex": total_gex,
+            "top_call": top_call,
+            "top_put": top_put,
+        }
+    except:
         return None
 
-def make_msg(r):
-    emoji = "🔴" if r['type'] == 'PUT' else "🟢"
-    strike_str = f"{r['strike']:.0f}" if r['strike'] == int(r['strike']) else f"{r['strike']:.1f}"
-    tag = " ⚡ مخالف للسوق" if r['diverges'] else ""
-    return f"""{emoji} {r['symbol']} {strike_str} {r['type']} 🐋{tag}
-Exp: {r['expiry']} ({r['days_left']}d) Stock: ${r['last']:.2f}
-Entry: ${r['entry']} Bid: ${r['bid']}
-Stop: ${r['stop']}
-Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)"""
+# ===== عرض حالة السوق =====
+is_open, market_msg = is_market_open()
+if is_open:
+    st.success(f"🟢 {market_msg}")
+else:
+    st.warning(f"🔴 {market_msg} - اللوحة تعرض بيانات إغلاق الجمعة للمراجعة فقط، لا تدخل على أساسها")
 
-def get_search_time_text():
-    search_time = st.session_state.get('search_time', None)
-    if search_time is None:
-        ny = pytz.timezone("America/New_York")
-        search_time = datetime.now(ny)
-    return f"📅 بحث: {search_time.strftime('%Y-%m-%d')} | ⏰ {search_time.strftime('%H:%M')} نيويورك"
+leaders = get_leaders_chg()
+if leaders:
+    cols = st.columns(2)
+    for i, (name, d) in enumerate(leaders.items()):
+        with cols[i]:
+            st.metric(f"القائد {name}", f"${d['last']:,.2f}", f"{d['chg_5d']:+.2f}% (5 أيام) | {d['chg_1d']:+.2f}% (يوم)")
 
-def make_all_msg(results):
-    header = get_search_time_text()
-    blocks = [header, "حيتان ابو راكان:"]
-    for r in results:
-        blocks.append(make_msg(r))
-    return "\n\n".join(blocks)
+st.caption("القائد هو SPX و NDX. SPY يتبع SPX، و QQQ يتبع NDX. الأسهم اللي تخالف القائد بقوة نسبية عالية، هي الأسهم اللي فيها قوة حقيقية، مو أسهم نحذفها.")
 
-def make_single_msg(r):
-    header = get_search_time_text()
-    return f"{header}\n\nحيتان ابو راكان:\n{make_msg(r)}"
-
-def whatsapp_button(msg, label, bg="#25D366"):
-    encoded = urllib.parse.quote(msg)
-    url = f"https://api.whatsapp.com/send?text={encoded}"
-    st.markdown(
-        f"""<a href="{url}" target="_blank" style="display:block; text-align:center; background-color:{bg}; color:white; padding:14px 20px; border-radius:12px; text-decoration:none; font-weight:bold; font-size:18px; margin:10px 0;">{label}</a>""",
-        unsafe_allow_html=True
-    )
-
-if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
+if st.button("🔍 اقرأ بيانات 150 سهم", use_container_width=True):
     ny = pytz.timezone("America/New_York")
     st.session_state['search_time'] = datetime.now(ny)
-    market_regime, market_text, spx_chg, ndx_chg, leaders = get_leaders_regime()
-    st.session_state['market_regime'] = market_regime
-    st.session_state['market_text'] = market_text
-    with st.spinner(f"جار قراءة القائد SPX و NDX: {market_text}..."):
+    with st.spinner("جار قراءة بيانات صناع السوق..."):
         results = []
         progress = st.progress(0)
         for i, sym in enumerate(STOCKS_150):
-            r = get_whale(sym, market_regime, spx_chg, ndx_chg)
+            r = get_stock_data(sym, leaders)
             if r:
                 results.append(r)
             progress.progress((i + 1) / len(STOCKS_150))
-        # الأسهم المخالفة بقوة نسبية عالية تطلع أول، لأنها الأقوى
-        # بعدين الأسهم اللي تمشي مع السوق
-        results = sorted(results, key=lambda x: (x['diverges'], abs(x['rs']), x['volume'] * x['oi']), reverse=True)[:10]
         st.session_state['results'] = results
-        st.success(f"✅ القائد: {market_text} | لقيت {len(results)} توصية")
+        st.success(f"✅ قرأنا {len(results)} سهم - بدون توصيات، بيانات فقط")
 
 if 'results' in st.session_state and st.session_state['results']:
-    st.subheader("🏆 أفضل وأقوى 10 توصيات - القائد SPX و NDX")
-    if 'search_time' in st.session_state:
-        st.caption(f"{get_search_time_text()}")
-    if 'market_text' in st.session_state:
-        st.info(f"📊 القائد: {st.session_state['market_text']}")
+    df = pd.DataFrame(st.session_state['results'])
+    # ترتيب حسب القوة النسبية المطلقة - الأسهم اللي تتحرك بقوة، سواء مع السوق ولا ضده
+    df['abs_rs'] = df['rs'].abs()
+    df = df.sort_values('abs_rs', ascending=False)
 
-    all_msg = make_all_msg(st.session_state['results'])
-    whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(st.session_state['results'])}) واتساب - اختر أي شخص", bg="#1E88E5")
+    st.subheader("📊 لوحة البيانات - اقرأ وانت اللي تقرر")
+
+    # فلتر
+    show_only = st.selectbox("عرض:", ["الكل", "أسهم أقوى من القائد (RS +)", "أسهم أضعف من القائد (RS -)", "أسهم قريبة من Max Pain", "أسهم قريبة من جدار الجاما"])
+    if show_only == "أسهم أقوى من القائد (RS +)":
+        df_show = df[df['rs'] > 0]
+    elif show_only == "أسهم أضعف من القائد (RS -)":
+        df_show = df[df['rs'] < 0]
+    elif show_only == "أسهم قريبة من Max Pain":
+        df_show = df[df['max_pain_pos'] == "عند المستوى"]
+    elif show_only == "أسهم قريبة من جدار الجاما":
+        df_show = df[df['gamma_pos'] == "عند المستوى"]
+    else:
+        df_show = df
+
+    # جدول البيانات الخام
+    table = []
+    for _, r in df_show.iterrows():
+        table.append({
+            "السهم": r['symbol'],
+            "السعر": f"${r['last']:.2f}",
+            "يوم": f"{r['chg_1d']:+.2f}%",
+            "5 أيام": f"{r['chg_5d']:+.2f}%",
+            "RS vs " + r['leader_name']: f"{r['rs']:+.2f}%",
+            "Max Pain": f"${r['max_pain']:.0f}" if r['max_pain'] else "-",
+            "السعر vs Max Pain": r['max_pain_pos'],
+            "جدار جاما": f"${r['gamma_wall']:.0f}" if r['gamma_wall'] else "-",
+            "السعر vs جاما": r['gamma_pos'],
+            "POC": f"${r['poc']:.0f}" if r['poc'] else "-",
+            "السعر vs POC": r['poc_pos'],
+            "P/C OI": f"{r['pcr_oi']:.2f}" if r['pcr_oi'] else "-",
+            "P/C Vol": f"{r['pcr_vol']:.2f}" if r['pcr_vol'] else "-",
+            "GEX": f"{r['total_gex']:,.0f}",
+            "Exp": f"{r['expiry']} ({r['days_left']}d)",
+        })
+    st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
+
     st.divider()
+    st.subheader("🔍 تفاصيل العقود - وين صانع السوق متواجد؟")
 
-    for idx, r in enumerate(st.session_state['results'], start=1):
-        emoji = "🔴" if r['type'] == 'PUT' else "🟢"
-        single = make_single_msg(r)
-        with st.container():
-            tag = " ⚡ مخالف للسوق - قوة نسبية" if r['diverges'] else " ✅ مع السوق"
-            st.markdown(f"### {idx}. {emoji} {r['symbol']} {r['strike']:.0f} {r['type']} 🐋{tag}")
-            st.write(f"Exp: {r['expiry']} ({r['days_left']}d) Stock: ${r['last']:.2f} | Entry: ${r['entry']} Bid: ${r['bid']} | Stop: ${r['stop']} | حجم: {r['volume']} | OI: {r['oi']}")
-            st.write(f"📊 Max Pain ${r['max_pain']:.0f} | P/C Vol {r['pcr_vol']} | السهم {r['stock_chg']:+.2f}% vs {r['leader_name']} {r['leader_chg']:+.2f}% | قوة نسبية {r['rs']:+.2f}%")
-            st.write(f"Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)")
-            whatsapp_button(single, f"📤 أرسل {r['symbol']} واتساب - اختر أي شخص", bg="#25D366")
-            st.divider()
+    for _, r in df_show.head(20).iterrows():
+        with st.expander(f"{r['symbol']} - ${r['last']:.2f} | RS {r['rs']:+.2f}% vs {r['leader_name']}"):
+            st.write(f"**السعر:** ${r['last']:.2f} | **تغير يوم:** {r['chg_1d']:+.2f}% | **تغير 5 أيام:** {r['chg_5d']:+.2f}%")
+            st.write(f"**القائد {r['leader_name']}:** {r['leader_chg']:+.2f}% (5 أيام) | **القوة النسبية:** {r['rs']:+.2f}%")
+            st.write(f"**Max Pain:** ${r['max_pain']:.0f} - السعر {r['max_pain_pos']}" if r['max_pain'] else "**Max Pain:** -")
+            st.write(f"**جدار الجاما:** ${r['gamma_wall']:.0f} - السعر {r['gamma_pos']}" if r['gamma_wall'] else "**جدار الجاما:** -")
+            st.write(f"**POC (أكبر فوليوم):** ${r['poc']:.0f} - السعر {r['poc_pos']}" if r['poc'] else "**POC:** -")
+            st.write(f"**Put/Call OI:** {r['pcr_oi']:.2f} | **Put/Call Vol:** {r['pcr_vol']:.2f} | **GEX:** {r['total_gex']:,.0f}")
+            st.write(f"**أكبر عقد CALL (OI×Vol):** {r['top_call']}")
+            st.write(f"**أكبر عقد PUT (OI×Vol):** {r['top_put']}")
+            st.write(f"**انتهاء:** {r['expiry']} ({r['days_left']} يوم)")
+            st.caption("هذا عرض بيانات، مو توصية. إذا السعر فوق Max Pain وجدار الجاما و POC، والسهم أقوى من القائد، هذي بيانات صاعدة. إذا تحتهم، بيانات هابطة. انت اللي تقرر.")
