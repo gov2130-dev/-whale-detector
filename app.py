@@ -1,7 +1,7 @@
 # ============================================================
-# حيتان ابو راكان - V17 - النسخة النهائية
-# التعديل: إضافة تاريخ ووقت البحث أعلى رسالة الواتساب
-# التاريخ يثبت لحظة الفحص، مو لحظة الإرسال
+# حيتان ابو راكان - V18 - النسخة النهائية
+# التعديل: حذفنا صندوق أسماء الشركات الحمر نهائيا
+# زر الجميع الحين يرسل العشر كلهم دائما، بدون اختيار
 # ============================================================
 import streamlit as st
 import yfinance as yf
@@ -112,22 +112,18 @@ Entry: ${r['entry']} Bid: ${r['bid']}
 Stop: ${r['stop']}
 Target: ${r['t1']} (+50%) | ${r['t2']} (+130%) | ${r['t3']} (+220%)"""
 
-# ===== V17: نجيب وقت البحث المحفوظ ونحطه أعلى الرسالة =====
 def get_search_time_text():
-    # إذا فيه وقت فحص محفوظ، نستخدمه. إذا ما فيه، نستخدم الحين
     search_time = st.session_state.get('search_time', None)
     if search_time is None:
         ny = pytz.timezone("America/New_York")
         search_time = datetime.now(ny)
-    # الصيغة: 📅 بحث: 2026-11-14 | ⏰ 16:05 نيويورك
     return f"📅 بحث: {search_time.strftime('%Y-%m-%d')} | ⏰ {search_time.strftime('%H:%M')} نيويورك"
 
-def make_all_msg(results, selected):
+def make_all_msg(results):
     header = get_search_time_text()
     blocks = [header, "حيتان ابو راكان:"]
     for r in results:
-        if r['symbol'] in selected:
-            blocks.append(make_msg(r))
+        blocks.append(make_msg(r))
     return "\n\n".join(blocks)
 
 def make_single_msg(r):
@@ -143,7 +139,6 @@ def whatsapp_button(msg, label, bg="#25D366"):
     )
 
 if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
-    # ===== V17: نسجل وقت البحث هنا، لحظة الضغط على الفحص =====
     ny = pytz.timezone("America/New_York")
     st.session_state['search_time'] = datetime.now(ny)
     with st.spinner(f"جار فحص {len(STOCKS_150)} سهم..."):
@@ -156,27 +151,18 @@ if st.button("🔍 افحص الآن - 150 سهم", use_container_width=True):
             progress.progress((i + 1) / len(STOCKS_150))
         results = sorted(results, key=lambda x: x['volume'], reverse=True)[:10]
         st.session_state['results'] = results
-        st.session_state['selected'] = [r['symbol'] for r in results]
         st.success(f"✅ لقيت {len(results)} توصية")
 
 if 'results' in st.session_state and st.session_state['results']:
     st.subheader("🏆 أفضل وأقوى 10 توصيات")
-    # نعرض وقت البحث في التطبيق بعد، عشان تعرف متى فحصت
     if 'search_time' in st.session_state:
         st.caption(f"{get_search_time_text()}")
 
-    all_symbols = [r['symbol'] for r in st.session_state['results']]
-    selected = st.multiselect(
-        "✅ حدد الأسهم اللي تبي ترسلها في زر الجميع",
-        options=all_symbols,
-        default=st.session_state.get('selected', all_symbols),
-        key="selected_multiselect"
-    )
-    st.session_state['selected'] = selected
-
-    if selected:
-        all_msg = make_all_msg(st.session_state['results'], selected)
-        whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(selected)}) واتساب - اختر أي شخص", bg="#1E88E5")
+    # ===== V18: حذفنا صندوق الأسماء الحمر نهائيا =====
+    # ما عاد فيه multiselect ولا أسماء حمر فوق
+    # زر الجميع يرسل العشر كلهم دائما
+    all_msg = make_all_msg(st.session_state['results'])
+    whatsapp_button(all_msg, f"📤 أرسل الجميع ({len(st.session_state['results'])}) واتساب - اختر أي شخص", bg="#1E88E5")
 
     st.divider()
 
